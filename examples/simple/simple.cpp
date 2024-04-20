@@ -26,19 +26,29 @@ int main(int argc, char ** argv) {
         params.prompt = "Hello my name is";
     }
 
-    // total length of the sequence including the prompt
-    const int n_len = 32;
+
+    llama_model_params model_params = llama_model_default_params();
+
+    // how many fake tokens to add on each iteration. 0 is no-op.
+    int mock_tokens = 0;
+    model_params.n_gpu_layers = 0; //99; CPU vs GPU
+    if (argc >= 4) {
+      mock_tokens = atoi(argv[3]);
+    }
+
+    if (argc >= 5) {
+      model_params.n_gpu_layers = atoi(argv[4]);
+    }
 
     // init LLM
+    // total length of the sequence including the prompt
+    const int n_len = 256;
 
     llama_backend_init();
     llama_numa_init(params.numa);
 
     // initialize the model
 
-    llama_model_params model_params = llama_model_default_params();
-
-    // model_params.n_gpu_layers = 99; // offload all layers to the GPU
 
     llama_model * model = llama_load_model_from_file(params.model.c_str(), model_params);
 
@@ -115,11 +125,14 @@ int main(int argc, char ** argv) {
 
     const auto t_main_start = ggml_time_us();
 
+    // we'll use logits from this position to determine next token
+    int logit_idx = batch.n_tokens - 1;
+
     while (n_cur <= n_len) {
         // sample the next token
         {
             auto   n_vocab = llama_n_vocab(model);
-            auto * logits  = llama_get_logits_ith(ctx, batch.n_tokens - 1);
+            auto * logits  = llama_get_logits_ith(ctx, logit_idx);
 
             std::vector<llama_token_data> candidates;
             candidates.reserve(n_vocab);
@@ -149,6 +162,12 @@ int main(int argc, char ** argv) {
             // push this new token for next evaluation
             llama_batch_add(batch, new_token_id, n_cur, { 0 }, true);
 
+            for (int fl = 0; fl < mock_tokens; fl++) {
+              llama_batch_add(batch, new_token_id, n_cur + 1 + fl, { 0 }, true);
+            }
+            // we still use the 'original' token to sample on next iteration
+            logit_idx = batch.n_tokens - mock_tokens - 1;
+
             n_decode += 1;
         }
 
@@ -159,6 +178,8 @@ int main(int argc, char ** argv) {
             fprintf(stderr, "%s : failed to eval, return code %d\n", __func__, 1);
             return 1;
         }
+        // remove the cached entries from mock tokens
+        llama_kv_cache_seq_rm(ctx, 0, n_cur, -1);
     }
 
     LOG_TEE("\n");
@@ -168,7 +189,7 @@ int main(int argc, char ** argv) {
     LOG_TEE("%s: decoded %d tokens in %.2f s, speed: %.2f t/s\n",
             __func__, n_decode, (t_main_end - t_main_start) / 1000000.0f, n_decode / ((t_main_end - t_main_start) / 1000000.0f));
 
-    llama_print_timings(ctx);
+    //llama_print_timings(ctx);
 
     fprintf(stderr, "\n");
 
