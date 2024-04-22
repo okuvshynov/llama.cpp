@@ -27,7 +27,7 @@ int main(int argc, char ** argv) {
     }
 
     // total length of the sequence including the prompt
-    const int n_len = 32;
+    const int n_len = 1024;
 
     // init LLM
 
@@ -103,6 +103,7 @@ int main(int argc, char ** argv) {
     // llama_decode will output logits only for the last token of the prompt
     batch.logits[batch.n_tokens - 1] = true;
 
+    const auto t_main_start = ggml_time_us();
     if (llama_decode(ctx, batch) != 0) {
         LOG_TEE("%s: llama_decode() failed\n", __func__);
         return 1;
@@ -112,8 +113,6 @@ int main(int argc, char ** argv) {
 
     int n_cur    = batch.n_tokens;
     int n_decode = 0;
-
-    const auto t_main_start = ggml_time_us();
 
     while (n_cur <= n_len) {
         // sample the next token
