@@ -3,16 +3,18 @@
 
 #include <cmath>
 #include <cstdio>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
-#include <mutex>
 
 struct linear_speculative_context {
   std::vector<llama_token> speculation;
   std::mutex mut_speculation;
   bool done;
 };
+
+size_t wasted_spec = 0;
 
 static std::vector<llama_token> greedy_tokens(llama_model* model, llama_context* ctx, int from_idx, int to_idx) {
   auto   n_vocab = llama_n_vocab(model);
@@ -35,10 +37,6 @@ static std::vector<llama_token> greedy_tokens(llama_model* model, llama_context*
   return res;
 } 
 
-// what we do next
-// - try llama3 8B & 70B
-// - measure how they work on GPU/CPU at different quant level
-// - for example, if we were to run 8b 70 on top of 4b 8? Can we make it work?
 static int main_loop(llama_model* model, linear_speculative_context* spec_ctx, gpt_params params) {
     const int n_len = 256;
     llama_context_params ctx_params = llama_context_default_params();
@@ -70,7 +68,7 @@ static int main_loop(llama_model* model, linear_speculative_context* spec_ctx, g
         return 1;
     }
 
-    llama_batch batch = llama_batch_init(512, 0, 1);
+    llama_batch batch = llama_batch_init(256, 0, 1);
 
     // evaluate the initial prompt
     for (size_t i = 0; i < tokens_list.size(); i++) {
@@ -110,12 +108,11 @@ static int main_loop(llama_model* model, linear_speculative_context* spec_ctx, g
             n_cur += 1;
           } else {
             // reject. next_tokens[i] is the last 'correct' one.
-            // removing all rejected next tokens
             next_tokens.erase(next_tokens.begin() + i + 1, next_tokens.end());
             break;
           }
         }
-        //printf("%zu %zu\n", input_seq.size(), next_tokens.size());
+        printf("matching in/out %zu %zu\n", input_seq.size(), next_tokens.size());
 
         llama_kv_cache_seq_rm(ctx, 0, n_cur - 1, -1);
 
@@ -132,10 +129,9 @@ static int main_loop(llama_model* model, linear_speculative_context* spec_ctx, g
           break;
         }
 
+        size_t specsize = 0;
         {
           std::lock_guard<std::mutex> _lock(spec_ctx->mut_speculation);
-          // here we need to match the currently available speculation and what we have accepted
-          // speculation is input_seq + whatever draft process appended to it.
           auto& spec = spec_ctx->speculation;
           size_t n_match = 0;
           for (size_t i = 0; i < next_tokens.size() && i + next_tokens_pos < spec.size(); i++) {
@@ -145,6 +141,7 @@ static int main_loop(llama_model* model, linear_speculative_context* spec_ctx, g
               break;
             }
           }
+          specsize = spec.size();
           if (n_match != next_tokens.size()) {
             // need to modify speculation
             spec.erase(spec.begin() + next_tokens_pos, spec.end());
@@ -152,15 +149,19 @@ static int main_loop(llama_model* model, linear_speculative_context* spec_ctx, g
               spec.push_back(tok);
             }
           }
+
+          if (spec.size() < specsize) {
+            //printf("Wasted: %zu\n", specsize - spec.size());
+            wasted_spec += (specsize - spec.size());
+          }
+    
           input_seq.assign(spec.begin() + n_cur - 1, spec.end());
         }
 
         llama_batch_clear(batch);
-
         for (size_t i = 0; i < input_seq.size(); i++) {
           llama_batch_add(batch, input_seq[i], n_cur - 1 + i, { 0 }, true);
         }
-        // evaluate the current batch with the transformer model
         if (llama_decode(ctx, batch)) {
             fprintf(stderr, "%s : failed to eval, return code %d\n", __func__, 1);
             return 1;
@@ -174,7 +175,6 @@ static int main_loop(llama_model* model, linear_speculative_context* spec_ctx, g
       spec_ctx->done = true;
     }
 
-    llama_print_timings(ctx);
     llama_batch_free(batch);
     llama_free(ctx);
     return 0;
@@ -203,13 +203,11 @@ static int draft_loop(llama_model* model, linear_speculative_context* spec_ctx, 
     spec_ctx->speculation = tokens_list;
     spec_ctx->done = false;
 
-
     const int n_ctx    = llama_n_ctx(ctx);
     const int n_kv_req = tokens_list.size() + (n_len - tokens_list.size());
 
     LOG_TEE("\n%s: n_len = %d, n_ctx = %d, n_kv_req = %d\n", __func__, n_len, n_ctx, n_kv_req);
 
-    // make sure the KV cache is big enough to hold all the prompt and generated tokens
     if (n_kv_req > n_ctx) {
         LOG_TEE("%s: error: n_kv_req > n_ctx, the required KV cache size is not big enough\n", __func__);
         LOG_TEE("%s:        either reduce n_len or increase n_ctx\n", __func__);
@@ -231,25 +229,18 @@ static int draft_loop(llama_model* model, linear_speculative_context* spec_ctx, 
         return 1;
     }
 
-    // main loop
-    int n_cur    = batch.n_tokens;
     int logit_idx = batch.n_tokens - 1;
     std::vector<llama_token> local_spec = tokens_list;
     size_t match_len;
 
-    return 0;
     while (true) {
-        // sample the next token
         auto next_tokens = greedy_tokens(model, ctx, logit_idx, logit_idx + 1);
         if (next_tokens.size() != 1) {
           fprintf(stderr, "invalid next tokens\n");
           return 1;
         }
-        // new_token_id will be written to position n_cur
 
         local_spec.push_back(next_tokens[0]);
-        //LOG_TEE("draft: %s\n", llama_token_to_piece(ctx, next_tokens[0]).c_str());
-        //fflush(stdout);
 
         {
           std::lock_guard<std::mutex> _lock(spec_ctx->mut_speculation);
@@ -257,9 +248,6 @@ static int draft_loop(llama_model* model, linear_speculative_context* spec_ctx, 
             break;
           } 
           auto& spec = spec_ctx->speculation;
-          // if all global is contained in local, we reuse the whole local
-          // if either there's a mismatch or global is longer we reuse all global while still 
-          // requesting logits from the last one only
           bool match = true;
           match_len = local_spec.size() - 1;
           for (size_t i = 0; i < std::min(spec.size(), local_spec.size()); i++) {
@@ -278,14 +266,14 @@ static int draft_loop(llama_model* model, linear_speculative_context* spec_ctx, 
         }
 
         llama_batch_clear(batch);
-        //printf("IN LOCAL: %zu %ld\n", match_len, local_spec.size());
-
+        // TODO theoretically this can be empty?
         for (size_t i = match_len; i < local_spec.size(); i++) {
           llama_batch_add(batch, local_spec[i], i, { 0 }, true);
         }
 
+        //printf("evaluating on %d\n", batch.n_tokens);
+
         logit_idx = batch.n_tokens - 1;
-        n_cur += 1;
 
         // evaluate the current batch with the transformer model
         if (llama_decode(ctx, batch)) {
@@ -294,7 +282,6 @@ static int draft_loop(llama_model* model, linear_speculative_context* spec_ctx, 
         }
     }
 
-    llama_print_timings(ctx);
     llama_batch_free(batch);
     llama_free(ctx);
     return 0;
@@ -308,7 +295,8 @@ int main(int argc, char ** argv) {
     }
 
     if (params.prompt.empty()) {
-        params.prompt = "Here's a list of main characters in Pulp Fiction movie:";
+        params.prompt = "What's the difference between instruction cache and data cache?";
+        //params.prompt = "Here's a list of main characters in Pulp Fiction movie:";
     }
 
     llama_backend_init();
@@ -327,9 +315,6 @@ int main(int argc, char ** argv) {
 
     linear_speculative_context spec_ctx;
 
-    //main_loop(gpu_model, &spec_ctx, params);
-    //draft_loop(gpu_model, &spec_ctx, params);
-
     const auto t_main_start = ggml_time_us();
     std::thread t_cpu(draft_loop, cpu_model, &spec_ctx, params);
     std::thread t_gpu(main_loop, gpu_model, &spec_ctx, params);
@@ -338,6 +323,7 @@ int main(int argc, char ** argv) {
     const auto t_main_end = ggml_time_us();
 
     printf("Total time: %.3lf\n", (t_main_end - t_main_start) / 1000000.0);
+    printf("Wasted spec: %zu\n", wasted_spec);
 
     llama_free_model(gpu_model);
     llama_free_model(cpu_model);

@@ -1421,7 +1421,7 @@ static enum ggml_status ggml_metal_graph_compute(
 
                         // find the break-even point where the matrix-matrix kernel becomes more efficient compared
                         // to the matrix-vector kernel
-                        int ne11_mm_min = 1;
+                        int ne11_mm_min = 3;
 
 #if 0
                         // the numbers below are measured on M2 Ultra for 7B and 13B models
