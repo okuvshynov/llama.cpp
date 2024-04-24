@@ -71,6 +71,7 @@ static int main_loop(
     llama_context *ctx,
     std::vector<llama_token> tokens_list /* copy here */) {
   const int n_len = 1024;
+  int input_len_dist[1024] = {0};
 
   llama_batch batch = llama_batch_init(1024, 0, 1);
 
@@ -173,6 +174,7 @@ static int main_loop(
     }
 
     llama_batch_clear(batch);
+    input_len_dist[input_seq.size()]++;
     for (size_t i = 0; i < input_seq.size(); i++) {
       llama_batch_add(batch, input_seq[i], n_cur - 1 + i, { 0 }, true);
     }
@@ -191,6 +193,12 @@ static int main_loop(
   {
     std::lock_guard<std::mutex> _lock(spec_ctx->mtx);
     spec_ctx->done = true;
+  }
+
+  for (int i = 0; i < n_len; i++) {
+    if (input_len_dist[i] > 0) {
+      std::cout << "input len_dist[" << i << "] = " << input_len_dist[i] << std::endl;
+    }
   }
 
   llama_batch_free(batch);
