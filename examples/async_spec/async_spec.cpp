@@ -263,7 +263,6 @@ static int draft_loop(
     }
 
     llama_batch_clear(batch);
-    // TODO theoretically this can be empty?
     for (size_t i = match_len; i < local_spec.size(); i++) {
       llama_batch_add(batch, local_spec[i], i, { 0 }, true);
     }
