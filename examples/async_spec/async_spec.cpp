@@ -51,7 +51,7 @@ static std::vector<llama_token> greedy_tokens(llama_model* model, llama_context*
   std::vector<llama_token> res;
 
   for (int idx = from_idx; idx < to_idx; idx++) {
-    auto * logits  = llama_get_logits_ith(ctx, idx);
+    auto *logits  = llama_get_logits_ith(ctx, idx);
     for (llama_token token_id = 0; token_id < n_vocab; token_id++) {
       candidates[token_id] = llama_token_data{ token_id, logits[token_id], 0.0f };
     }
