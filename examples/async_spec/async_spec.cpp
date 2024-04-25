@@ -44,7 +44,11 @@ struct linear_speculative_context {
 };
 
 // greedy sampling
-static std::vector<llama_token> greedy_tokens(llama_model* model, llama_context* ctx, int from_idx, int to_idx) {
+static std::vector<llama_token> greedy_tokens(
+    llama_model* model,
+    llama_context* ctx,
+    int from_idx,
+    int to_idx) {
   auto n_vocab = llama_n_vocab(model);
   std::vector<llama_token_data> candidates;
   candidates.resize(n_vocab);
@@ -228,7 +232,7 @@ static int draft_loop(
 
   int logit_idx = batch.n_tokens - 1;
   std::vector<llama_token> local_spec = tokens_list;
-  size_t match_len;
+  size_t match_len = 0;
 
   while (true) {
     auto next_tokens = greedy_tokens(model, ctx, logit_idx, logit_idx + 1);
@@ -255,7 +259,7 @@ static int draft_loop(
           break;
         }
       }
-      if (match) {
+      if (match && spec.size() < local_spec.size()) {
         spec = local_spec;
       } else {
         local_spec = spec;
