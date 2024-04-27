@@ -73,7 +73,7 @@ static int main_loop(
     llama_model *model,
     linear_speculative_context *spec_ctx,
     llama_context *ctx,
-    std::vector<llama_token> tokens_list /* copy here */) {
+    std::vector<llama_token> tokens_list /* making copy here */) {
   const int n_len = 1024;
   int input_len_dist[1024] = {0};
 
