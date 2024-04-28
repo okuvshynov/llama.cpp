@@ -46,6 +46,7 @@ static int main_loop(
     std::vector<llama_token> tokens_list /* copy here */) {
   const int n_len = 1024;
   std::map<uint32_t, uint32_t> rank_freq;
+  std::vector<uint32_t> rank_history;
 
   llama_batch batch = llama_batch_init(1024, 0, 1);
 
@@ -73,6 +74,7 @@ static int main_loop(
   while (n_cur <= n_len) {
     llama_token new_token_id = greedy_token(model, ctx, batch.n_tokens - 1);
     auto second_rank = token_rank(model_b, ctx_b, batch.n_tokens - 1, new_token_id);
+    rank_history.push_back(second_rank);
     rank_freq[second_rank] += 1;
 
     // this is where next_tokens start
@@ -100,6 +102,9 @@ static int main_loop(
   std::cout << std::endl << "Second model token ranks: " << std::endl;
   for (auto it: rank_freq) {
     std::cout << it.first << ": " << it.second << std::endl;
+  }
+  for (auto v: rank_history) {
+    std::cout << v << " ";
   }
 
   llama_batch_free(batch);
