@@ -83,7 +83,6 @@ static int decode(llama_context * ctx, iter_t from, iter_t to, int offset, bool 
     if (llama_decode(ctx, batch) != 0)
     {
         fprintf(stderr, "llama_decode() failed: n_tokens=%d\n", batch.n_tokens - 1);
-
         res = 1;
     }
     return res;
@@ -94,17 +93,16 @@ static int speculation(
     llama_model * model,
     speculation_context * spec_ctx,
     llama_context * ctx,
-    const llama_tokens & input) {
+    const llama_tokens & input,
+    size_t n_draft) 
+{
 
-    // TODO: check that input is non-empty
     llama_batch batch = llama_batch_init(512, 0, 1);
     decode(ctx, input.begin(), input.end(), 0, false, batch);
 
     int logit_idx = input.size() - 1;
     llama_tokens local = input, shared;
     size_t match_len;
-
-    size_t n_draft = 4;
 
     while (true) 
     {
@@ -132,16 +130,11 @@ static int speculation(
                 break;
             }
         }
-        if (match && shared.size() < local.size()) 
-        {
-            shared = local;
-        } 
-        else
+        if (!(match && shared.size() < local.size())) 
         {
             local = shared;
         }
 
-        // now speculate for n_draft
         for (size_t i = 0; i < n_draft; i++)
         {
             decode(ctx, local.begin() + match_len, local.end(), match_len, false, batch);
@@ -190,11 +183,6 @@ static int target(
     while (n_decoded < n_predict)
     {
         next_tokens = greedy_tokens(model, ctx, logits_from, logits_to);
-        if (next_tokens.size() != input_seq.size())
-        {
-            fprintf(stderr, "invalid next tokens\n");
-            return 1;
-        }
 
         size_t next_tokens_pos = n_accepted;
         // we always accept at least one new token
@@ -331,7 +319,7 @@ int main(int argc, char ** argv) {
 
     params.rpc_servers = params.rpc_servers_draft;
     std::tie(draft_model, draft_ctx) = llama_init_from_gpt_params(params);
-    std::thread spec_thread = std::thread(speculation, draft_model, &spec_ctx, draft_ctx, input);
+    std::thread spec_thread = std::thread(speculation, draft_model, &spec_ctx, draft_ctx, input, params.n_draft);
 
     target(model, &spec_ctx, ctx, input, params.n_predict);
 
