@@ -88,8 +88,7 @@ static int decode(llama_context * ctx, iter_t from, iter_t to, int offset, bool 
     return res;
 }
 
-// this becomes more similar to sequential versions
-static int speculation(
+static void speculation(
     llama_model    * model,
     llama_context  * ctx,
     shared_context * sctx,
@@ -151,10 +150,9 @@ static int speculation(
     }
 
     llama_batch_free(batch);
-    return 0;
 }
 
-static int target(
+static void target(
     llama_model    * model,
     llama_context  * ctx,
     shared_context * sctx,
@@ -168,8 +166,6 @@ static int target(
 
     size_t n_accepted = input.size();
     size_t n_decoded  = 0;
-
-    const auto t_main_start = ggml_time_us();
 
     // we'll use logits from this position to determine next token
     int logits_from = input.size() - 1;
@@ -256,12 +252,6 @@ static int target(
         logits_to   = input_seq.size();
     }
 
-    const auto t_main_end = ggml_time_us();
-
-    fprintf(stderr, "decoded %zu tokens in %.2f s, speed: %.2f t/s\n",
-            n_decoded, (t_main_end - t_main_start) / 1000000.0f, n_decoded / ((t_main_end - t_main_start) / 1000000.0f));
-
-    llama_print_timings(ctx);
     fprintf(stderr, "\n");
     {
         std::lock_guard<std::mutex> _lock(sctx->mtx);
@@ -269,7 +259,6 @@ static int target(
     }
 
     llama_batch_free(batch);
-    return 0;
 }
 
 int main(int argc, char ** argv) {
@@ -287,7 +276,6 @@ int main(int argc, char ** argv) {
 
     llama_backend_init();
     llama_numa_init(params.numa);
-    shared_context sctx;
 
     // main model and context
     llama_model * model = nullptr;
@@ -295,10 +283,8 @@ int main(int argc, char ** argv) {
     std::tie(model, ctx) = llama_init_from_gpt_params(params);
 
     llama_tokens input = llama_tokenize(ctx, params.prompt, true);
-    sctx.candidate = input;
-    sctx.turn = Turn::SPEC;
 
-    // prepare draft model and contexts.
+    // draft model and contexts.
     llama_model * draft_model = nullptr;
     llama_context * draft_ctx = nullptr;
 
@@ -309,9 +295,13 @@ int main(int argc, char ** argv) {
         params.n_threads = params.n_threads_draft;
     }
     params.n_threads_batch = params.n_threads_batch_draft;
-
     params.rpc_servers = params.rpc_servers_draft;
     std::tie(draft_model, draft_ctx) = llama_init_from_gpt_params(params);
+    
+    shared_context sctx;
+    sctx.candidate = input;
+    sctx.turn = Turn::SPEC;
+
     std::thread spec_thread = std::thread(speculation, draft_model, draft_ctx, &sctx, input, params.n_draft);
 
     target(model, ctx, &sctx, input, params.n_predict);
@@ -320,10 +310,8 @@ int main(int argc, char ** argv) {
     
     llama_free(ctx);
     llama_free(draft_ctx);
-
     llama_free_model(model);
     llama_free_model(draft_model);
-
     llama_backend_free();
 
     return 0;
