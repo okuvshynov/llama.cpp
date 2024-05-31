@@ -165,7 +165,6 @@ static void target(
     decode(ctx, input.begin(), input.end(), 0, false, batch);
 
     size_t n_accepted = input.size();
-    size_t n_decoded  = 0;
 
     // we'll use logits from this position to determine next token
     int logits_from = input.size() - 1;
@@ -174,20 +173,18 @@ static void target(
     llama_tokens input_seq, next_tokens;
     input_seq.push_back(input.back());
 
-    while (n_decoded < n_predict)
+    while (n_accepted < n_predict + input.size())
     {
         next_tokens = greedy_tokens(model, ctx, logits_from, logits_to);
 
         size_t next_tokens_pos = n_accepted;
         // we always accept at least one new token
         n_accepted += 1;
-        n_decoded  += 1;
         for (size_t i = 0; i + 1 < input_seq.size(); i++)
         {
             if (next_tokens[i] == input_seq[i + 1])
             {
                 n_accepted += 1;
-                n_decoded  += 1;
             }
             else
             {
@@ -197,8 +194,6 @@ static void target(
             }
         }
 
-        // empty the non-matching portion of kv cache. 
-        // n_cur is incremented at least once and will be > 0
         llama_kv_cache_seq_rm(ctx, 0, n_accepted - 1, -1);
 
         bool done = false;
@@ -241,7 +236,7 @@ static void target(
             sctx->cv.notify_one();
         }
 
-        if (n_decoded >= n_predict || done)
+        if (n_accepted >= n_predict + input.size() || done)
         {
             break;
         }
@@ -252,7 +247,7 @@ static void target(
         logits_to   = input_seq.size();
     }
 
-    fprintf(stderr, "\n");
+    dbg_color("\n");
     {
         std::lock_guard<std::mutex> _lock(sctx->mtx);
         sctx->done = true;
