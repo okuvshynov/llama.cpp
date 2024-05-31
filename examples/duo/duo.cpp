@@ -63,7 +63,6 @@ static llama_tokens greedy_tokens(llama_model * model, llama_context * ctx, int3
                 new_token_id = token_id;
             }
         }
-
         res.push_back(new_token_id);
     }
     return res;
@@ -166,7 +165,6 @@ static void target(
 
     size_t n_accepted = input.size();
 
-    // we'll use logits from this position to determine next token
     int logits_from = input.size() - 1;
     int logits_to   = input.size();
 
@@ -180,20 +178,13 @@ static void target(
         size_t next_tokens_pos = n_accepted;
         // we always accept at least one new token
         n_accepted += 1;
-        for (size_t i = 0; i + 1 < input_seq.size(); i++)
+        size_t n_match = 0;
+        while (n_match + 1 < input_seq.size() && next_tokens[n_match] == input_seq[n_match + 1])
         {
-            if (next_tokens[i] == input_seq[i + 1])
-            {
-                n_accepted += 1;
-            }
-            else
-            {
-                // reject. next_tokens[i] is the last correct one.
-                next_tokens.erase(next_tokens.begin() + i + 1, next_tokens.end());
-                break;
-            }
+            n_match++;
         }
-
+        n_accepted += n_match;
+        next_tokens.erase(next_tokens.begin() + n_match + 1, next_tokens.end());
         llama_kv_cache_seq_rm(ctx, 0, n_accepted - 1, -1);
 
         bool done = false;
@@ -298,9 +289,7 @@ int main(int argc, char ** argv) {
     sctx.turn = Turn::SPEC;
 
     std::thread spec_thread = std::thread(speculation, draft_model, draft_ctx, &sctx, input, params.n_draft);
-
     target(model, ctx, &sctx, input, params.n_predict);
-
     spec_thread.join();
     
     llama_free(ctx);
