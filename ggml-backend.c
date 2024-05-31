@@ -1075,9 +1075,6 @@ struct ggml_backend_sched {
     ggml_backend_sched_eval_callback callback_eval;
     void * callback_eval_user_data;
 
-    ggml_backend_sched_split_done_callback callback_split_done;
-    void * callback_split_done_user_data;
-
     // align context_buffer to GGML_MEM_ALIGN
 #ifdef _MSC_VER
     __declspec(align(GGML_MEM_ALIGN))
@@ -1711,11 +1708,6 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                 ggml_backend_event_record(sched->events[split_backend_id][sched->cur_copy]);
             }
         }
-
-        // split finished
-        if (sched->callback_split_done) {
-            sched->callback_split_done(i, sched->callback_split_done_user_data);
-        }
     }
 
     sched->cur_copy = (sched->cur_copy + 1) % sched->n_copies;
@@ -1862,11 +1854,6 @@ void ggml_backend_sched_synchronize(ggml_backend_sched_t sched) {
 void ggml_backend_sched_set_eval_callback(ggml_backend_sched_t sched, ggml_backend_sched_eval_callback callback, void * user_data) {
     sched->callback_eval = callback;
     sched->callback_eval_user_data = user_data;
-}
-
-void ggml_backend_sched_set_split_done_callback(ggml_backend_sched_t sched, ggml_backend_sched_split_done_callback callback, void * user_data) {
-    sched->callback_split_done = callback;
-    sched->callback_split_done_user_data = user_data;
 }
 
 int ggml_backend_sched_get_n_splits(ggml_backend_sched_t sched) {

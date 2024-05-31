@@ -1899,9 +1899,6 @@ struct llama_cparams {
 
     ggml_backend_sched_eval_callback cb_eval;
     void * cb_eval_user_data;
-
-    ggml_backend_sched_split_done_callback cb_split_done;
-    void * cb_split_done_user_data;
 };
 
 struct llama_layer {
@@ -11765,7 +11762,6 @@ static int llama_decode_internal(
 
         ggml_backend_sched_reset(lctx.sched);
         ggml_backend_sched_set_eval_callback(lctx.sched, lctx.cparams.cb_eval, lctx.cparams.cb_eval_user_data);
-        ggml_backend_sched_set_split_done_callback(lctx.sched, lctx.cparams.cb_split_done, lctx.cparams.cb_split_done_user_data);
 
         ggml_cgraph * gf = llama_build_graph(lctx, u_batch, false);
 
@@ -15703,8 +15699,6 @@ struct llama_context_params llama_context_default_params() {
         /*.defrag_thold                =*/ -1.0f,
         /*.cb_eval                     =*/ nullptr,
         /*.cb_eval_user_data           =*/ nullptr,
-        /*.cb_split_done               =*/ nullptr,
-        /*.cb_split_done_user_data     =*/ nullptr,
         /*.type_k                      =*/ GGML_TYPE_F16,
         /*.type_v                      =*/ GGML_TYPE_F16,
         /*.logits_all                  =*/ false,
@@ -15916,9 +15910,6 @@ struct llama_context * llama_new_context_with_model(
 
     cparams.cb_eval           = params.cb_eval;
     cparams.cb_eval_user_data = params.cb_eval_user_data;
-    cparams.cb_split_done     = params.cb_split_done;
-    cparams.cb_split_done_user_data = params.cb_split_done_user_data;
-    
 
     auto rope_scaling_type = params.rope_scaling_type;
     if (rope_scaling_type == LLAMA_ROPE_SCALING_TYPE_UNSPECIFIED) {

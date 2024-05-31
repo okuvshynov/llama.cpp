@@ -30,23 +30,21 @@ static std::string to_string(llama_context * ctx, iter_t from, iter_t to)
 
 using llama_tokens = std::vector<llama_token>;
 
+enum Turn
+{
+    NONE = 0,
+    SPEC = 1,
+    MAIN = 2
+};
+
 struct speculation_context
 {
     llama_tokens candidate;
-    int32_t      vacant_id; // not running main model
     std::mutex   mtx;
-    bool         done;
+    bool         done = false;
+    Turn         turn = NONE;
+    std::condition_variable cv;
 };
-
-static void split_done_cb(int split, void * p_spec_ctx)
-{
-    if (split == 1 || split == 2)
-    {
-        auto * spec_ctx = static_cast<speculation_context*>(p_spec_ctx);
-        std::lock_guard<std::mutex> guard(spec_ctx->mtx);
-        spec_ctx->vacant_id = split - 1;
-    }
-}
 
 // this ignores all the other sampling criteria
 static llama_tokens greedy_tokens(llama_model * model, llama_context * ctx, int32_t from, int32_t to)
@@ -84,12 +82,14 @@ static int decode(llama_context * ctx, iter_t from, iter_t to, int offset, bool 
     int res = 0;
     if (llama_decode(ctx, batch) != 0)
     {
-        fprintf(stderr, "llama_decode() failed\n");
+        fprintf(stderr, "llama_decode() failed: n_tokens=%d\n", batch.n_tokens - 1);
+
         res = 1;
     }
     return res;
 }
 
+// this becomes more similar to sequential versions
 static int speculation(
     llama_model * model,
     speculation_context * spec_ctx,
@@ -101,66 +101,62 @@ static int speculation(
     decode(ctx, input.begin(), input.end(), 0, false, batch);
 
     int logit_idx = input.size() - 1;
-    llama_tokens local = input;
+    llama_tokens local = input, shared;
     size_t match_len;
 
-    // TODO: here we need to not generate too many and wait
+    size_t n_draft = 4;
+
     while (true) 
     {
-        // TODO: cond var instead
-        bool wait = false;
         {
-            std::lock_guard<std::mutex> g(spec_ctx->mtx);
+            std::unique_lock<std::mutex> lock(spec_ctx->mtx);
+            spec_ctx->cv.wait(lock, [&spec_ctx] { return spec_ctx->turn == Turn::SPEC || spec_ctx->done; });
             if (spec_ctx->done)
             {
                 break;
             }
-            if (spec_ctx->vacant_id != 0)
-            {
-                wait = true;
-            }
-        }
-        if (wait)
-        {
-            std::this_thread::sleep_for(std::chrono::milliseconds{5});
-            continue;
+            shared = spec_ctx->candidate;
+            spec_ctx->turn = Turn::NONE;
         }
 
-        auto next_tokens = greedy_tokens(model, ctx, logit_idx, logit_idx + 1);
-        if (next_tokens.size() != 1)
+        // here we merge shared and local and clean the cache if needed
+        bool match = true;
+        match_len = local.size() - 1;
+        for (size_t i = 0; i < std::min(shared.size(), local.size()); i++)
         {
-            fprintf(stderr, "invalid next tokens\n");
-            return 1;
-        }
-
-        local.push_back(next_tokens[0]);
-        {
-            std::lock_guard<std::mutex> _lock(spec_ctx->mtx);
-            auto& shared = spec_ctx->candidate;
-            bool match = true;
-            match_len = local.size() - 1;
-            for (size_t i = 0; i < std::min(shared.size(), local.size()); i++)
+            if (shared[i] != local[i])
             {
-                if (shared[i] != local[i])
-                {
-                    match = false;
-                    match_len = i;
-                    llama_kv_cache_seq_rm(ctx, 0, i, -1);
-                    break;
-                }
-            }
-            if (match && shared.size() < local.size()) 
-            {
-                shared = local;
-            } 
-            else 
-            {
-                local = shared;
+                match = false;
+                match_len = i;
+                llama_kv_cache_seq_rm(ctx, 0, i, -1);
+                break;
             }
         }
+        if (match && shared.size() < local.size()) 
+        {
+            shared = local;
+        } 
+        else
+        {
+            local = shared;
+        }
 
-        decode(ctx, local.begin() + match_len, local.end(), match_len, false, batch);
-        logit_idx = local.size() - match_len - 1;
+        // now speculate for n_draft
+        for (size_t i = 0; i < n_draft; i++)
+        {
+            decode(ctx, local.begin() + match_len, local.end(), match_len, false, batch);
+            logit_idx = local.size() - match_len - 1;
+            auto next_tokens = greedy_tokens(model, ctx, logit_idx, logit_idx + 1);
+            match_len = local.size();
+            local.push_back(next_tokens[0]);
+        }
+
+        {
+            std::unique_lock<std::mutex> lock(spec_ctx->mtx);
+            spec_ctx->candidate = local;
+            spec_ctx->turn = Turn::MAIN;
+            spec_ctx->cv.notify_one();
+        }
     }
 
     llama_batch_free(batch);
@@ -236,7 +232,8 @@ static int target(
         }
 
         {
-            std::lock_guard<std::mutex> _lock(spec_ctx->mtx);
+            std::unique_lock<std::mutex> lock(spec_ctx->mtx);
+            spec_ctx->cv.wait(lock, [&spec_ctx] { return spec_ctx->turn == Turn::MAIN; });
             auto & spec = spec_ctx->candidate;
             size_t n_match = 0;
             for (size_t i = 0; i < next_tokens.size() && i + next_tokens_pos < spec.size(); i++)
@@ -263,7 +260,10 @@ static int target(
                 }
             }
             input_seq.assign(spec.begin() + n_accepted - 1, spec.end());
+            spec_ctx->turn = Turn::SPEC;
+            spec_ctx->cv.notify_one();
         }
+
         if (n_decoded >= n_predict || done)
         {
             break;
@@ -311,12 +311,11 @@ int main(int argc, char ** argv) {
     // main model and context
     llama_model * model = nullptr;
     llama_context * ctx = nullptr;
-    params.cb_split_done = split_done_cb;
-    params.cb_split_done_user_data = &spec_ctx;
     std::tie(model, ctx) = llama_init_from_gpt_params(params);
 
     llama_tokens input = llama_tokenize(ctx, params.prompt, true);
     spec_ctx.candidate = input;
+    spec_ctx.turn = Turn::SPEC;
 
     // prepare draft model and contexts.
     llama_model * draft_model = nullptr;
@@ -330,7 +329,6 @@ int main(int argc, char ** argv) {
     }
     params.n_threads_batch = params.n_threads_batch_draft;
 
-    params.cb_split_done = nullptr;
     params.rpc_servers = params.rpc_servers_draft;
     std::tie(draft_model, draft_ctx) = llama_init_from_gpt_params(params);
     std::thread spec_thread = std::thread(speculation, draft_model, &spec_ctx, draft_ctx, input);
