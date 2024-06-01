@@ -187,13 +187,13 @@ static void target(
         next_tokens.erase(next_tokens.begin() + n_match + 1, next_tokens.end());
         llama_kv_cache_seq_rm(ctx, 0, n_accepted - 1, -1);
 
-        bool done = false;
+        bool eog = false;
         for (size_t i = 0; i < next_tokens.size(); i++)
         {
             // TODO: what should we do here, is this correct
             if (next_tokens[i] == llama_token_eos(model) || llama_token_is_eog(model, next_tokens[i]))
             {
-                done = true;
+                eog = true;
                 next_tokens.erase(next_tokens.begin() + i, next_tokens.end());
                 break;
             }
@@ -227,7 +227,7 @@ static void target(
             sctx->cv.notify_one();
         }
 
-        if (n_accepted >= n_predict + input.size() || done)
+        if (n_accepted >= n_predict + input.size() || eog)
         {
             break;
         }

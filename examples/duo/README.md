@@ -68,3 +68,18 @@ GPU util for both devices
 
 In duo case: we utilize GPU at ~100% for instance running both speculation and main model, and ~50% for the one running main model only
 In main model only case: we utilize both at ~50%. The imbalance is likely because hardware is slightly different - M2 vs M1.
+
+
+### Next
+
+```
+time ./bin/duo -m ../../llms/gguf/Meta-Llama-3-8B-Instruct-fp16.gguf -md ../../llms/gguf/Meta-Llama-3-8B-Instruct-v2.Q2_K.gguf --rpc "169.254.77.16:10001,localhost:10001" -f /tmp/p.txt -n 1024 -ngl 99  --rpcd "localhost:20002" --draft 4 -c 2048
+
+
+1:55.07 total
+```
+
+
+```
+time ./bin/main -m ../../llms/gguf/Meta-Llama-3-8B-Instruct-fp16.gguf  --rpc "169.254.77.16:10001,localhost:10001" -f /tmp/p.txt -n 1024 -ngl 99 -c 2048
+```
