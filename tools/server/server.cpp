@@ -1209,6 +1209,8 @@ struct server_task_result_metrics : server_task_result {
 
     uint64_t n_decode_total     = 0;
     uint64_t n_busy_slots_total = 0;
+    
+    int32_t max_n_past = 0;  // Maximum observed n_past value
 
     // while we can also use std::vector<server_slot> this requires copying the slot object which can be quite messy
     // therefore, we use json to temporarily store the slot.to_json() result
@@ -1595,6 +1597,8 @@ struct server_metrics {
 
     uint64_t n_decode_total     = 0;
     uint64_t n_busy_slots_total = 0;
+    
+    int32_t max_n_past = 0;  // Maximum observed n_past value across all slots
 
     void init() {
         t_start = ggml_time_us();
@@ -1605,6 +1609,7 @@ struct server_metrics {
         n_prompt_tokens_processed       += slot.n_prompt_tokens_processed;
         t_prompt_processing             += slot.t_prompt_processing;
         t_prompt_processing_total       += slot.t_prompt_processing;
+        update_max_n_past(slot);
     }
 
     void on_prediction(const server_slot & slot) {
@@ -1612,6 +1617,7 @@ struct server_metrics {
         n_tokens_predicted         += slot.n_decoded;
         t_tokens_generation        += slot.t_token_generation;
         t_tokens_generation_total  += slot.t_token_generation;
+        update_max_n_past(slot);
     }
 
     void on_decoded(const std::vector<server_slot> & slots) {
@@ -1619,7 +1625,14 @@ struct server_metrics {
         for (const auto & slot : slots) {
             if (slot.is_processing()) {
                 n_busy_slots_total++;
+                update_max_n_past(slot);
             }
+        }
+    }
+    
+    void update_max_n_past(const server_slot & slot) {
+        if (slot.n_past > max_n_past) {
+            max_n_past = slot.n_past;
         }
     }
 
@@ -1628,6 +1641,7 @@ struct server_metrics {
         t_prompt_processing       = 0;
         n_tokens_predicted        = 0;
         t_tokens_generation       = 0;
+        // Note: max_n_past is not reset here to preserve the max value across buckets
     }
 };
 
@@ -2882,6 +2896,7 @@ struct server_context {
 
                     res->n_decode_total          = metrics.n_decode_total;
                     res->n_busy_slots_total      = metrics.n_busy_slots_total;
+                    res->max_n_past              = metrics.max_n_past;
 
                     if (task.metrics_reset_bucket) {
                         metrics.reset_bucket();
@@ -4098,6 +4113,10 @@ int main(int argc, char ** argv) {
                     {"name",  "requests_deferred"},
                     {"help",  "Number of requests deferred."},
                     {"value",  (uint64_t) res_metrics->n_tasks_deferred}
+            },{
+                    {"name",  "max_n_past"},
+                    {"help",  "Maximum observed n_past value across all slots."},
+                    {"value",  (int32_t) res_metrics->max_n_past}
             }}}
         };
 
