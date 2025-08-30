@@ -1619,6 +1619,9 @@ struct server_metrics {
         for (const auto & slot : slots) {
             if (slot.is_processing()) {
                 n_busy_slots_total++;
+                if ((uint64_t)slot.n_past > n_past_max) {
+                    n_past_max = slot.n_past;
+                }
             }
         }
     }
@@ -4098,6 +4101,10 @@ int main(int argc, char ** argv) {
                     {"name",  "requests_deferred"},
                     {"help",  "Number of requests deferred."},
                     {"value",  (uint64_t) res_metrics->n_tasks_deferred}
+            },{
+                    {"name",  "kv_cache_tokens_max"},
+                    {"help",  "Maximum observed n_past value."},
+                    {"value",  res_metrics->kv_cache_tokens_max}
             }}}
         };
 
