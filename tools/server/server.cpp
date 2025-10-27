@@ -156,14 +156,31 @@ static bool moe_expert_logger(struct ggml_tensor * t, bool ask, void * user_data
 
     std::lock_guard<std::mutex> lock(data->log_mutex);
 
-    // Parse different tensor types
-    if (tensor_name.find("ffn_moe_logits") != std::string::npos) {
-        // Shape: [n_expert, n_tokens]
-        int n_experts = t->ne[0];
+    // CSV format: layer_id,expert_ids
+    // Only log the top-k expert selections
+    if (tensor_name.find("ffn_moe_topk") != std::string::npos) {
+        // Shape: [n_expert_used, n_tokens]
+        int n_expert_used = t->ne[0];
         int n_tokens = t->ne[1];
 
-        float * logits = (float *) tensor_data;
+        int32_t * indices = (int32_t *) tensor_data;
 
+        for (int tok = 0; tok < n_tokens; tok++) {
+            data->log_file << layer << ",";
+            for (int i = 0; i < n_expert_used; i++) {
+                data->log_file << indices[tok * n_expert_used + i];
+                if (i < n_expert_used - 1) data->log_file << " ";
+            }
+            data->log_file << "\n";
+        }
+    }
+
+    // Commented out - can be re-enabled for detailed analysis
+    /*
+    if (tensor_name.find("ffn_moe_logits") != std::string::npos) {
+        int n_experts = t->ne[0];
+        int n_tokens = t->ne[1];
+        float * logits = (float *) tensor_data;
         data->log_file << "Layer " << layer << " - Raw Logits:\n";
         data->log_file << "  n_experts=" << n_experts << ", n_tokens=" << n_tokens << "\n";
         for (int tok = 0; tok < n_tokens; tok++) {
@@ -175,15 +192,11 @@ static bool moe_expert_logger(struct ggml_tensor * t, bool ask, void * user_data
             if (n_experts > 10) data->log_file << ", ...";
             data->log_file << "]\n";
         }
-
     } else if (tensor_name.find("ffn_moe_probs") != std::string::npos &&
                tensor_name.find("biased") == std::string::npos) {
-        // Shape: [n_expert, n_tokens] or [1, n_expert, n_tokens]
         int n_experts = t->ne[1] > 1 ? t->ne[1] : t->ne[0];
         int n_tokens = t->ne[2] > 1 ? t->ne[2] : (t->ne[1] > 1 ? t->ne[2] : t->ne[1]);
-
         float * probs = (float *) tensor_data;
-
         data->log_file << "Layer " << layer << " - Router Probabilities:\n";
         for (int tok = 0; tok < std::min(n_tokens, 3); tok++) {
             data->log_file << "  Token " << tok << ": [";
@@ -194,36 +207,13 @@ static bool moe_expert_logger(struct ggml_tensor * t, bool ask, void * user_data
             if (n_experts > 10) data->log_file << ", ...";
             data->log_file << "]\n";
         }
-
-    } else if (tensor_name.find("ffn_moe_topk") != std::string::npos) {
-        // Shape: [n_expert_used, n_tokens]
-        // This contains the INDICES of selected experts
-        int n_expert_used = t->ne[0];
-        int n_tokens = t->ne[1];
-
-        int32_t * indices = (int32_t *) tensor_data;
-
-        data->log_file << "Layer " << layer << " - Selected Expert IDs (top-"
-                      << n_expert_used << "):\n";
-        for (int tok = 0; tok < n_tokens; tok++) {
-            data->log_file << "  Token " << tok << ": [";
-            for (int i = 0; i < n_expert_used; i++) {
-                data->log_file << indices[tok * n_expert_used + i];
-                if (i < n_expert_used - 1) data->log_file << ", ";
-            }
-            data->log_file << "]\n";
-        }
-
     } else if (tensor_name.find("ffn_moe_weights") != std::string::npos &&
                tensor_name.find("_sum") == std::string::npos &&
                tensor_name.find("_norm") == std::string::npos &&
                tensor_name.find("_scaled") == std::string::npos) {
-        // Shape: [1, n_expert_used, n_tokens] or [n_expert_used, n_tokens]
         int n_expert_used = t->ne[1] > 1 ? t->ne[1] : t->ne[0];
         int n_tokens = t->ne[2] > 1 ? t->ne[2] : (t->ne[1] > 1 ? t->ne[2] : t->ne[1]);
-
         float * weights = (float *) tensor_data;
-
         data->log_file << "Layer " << layer << " - Expert Routing Weights:\n";
         for (int tok = 0; tok < n_tokens; tok++) {
             data->log_file << "  Token " << tok << ": [";
@@ -237,6 +227,7 @@ static bool moe_expert_logger(struct ggml_tensor * t, bool ask, void * user_data
             data->log_file << "] (sum=" << sum << ")\n";
         }
     }
+    */
 
     data->log_file.flush();
     return true;
@@ -4574,7 +4565,8 @@ int main(int argc, char ** argv) {
     ctx_server.moe_log.log_file.open("moe_expert_selection.log");
     if (ctx_server.moe_log.log_file.is_open()) {
         ctx_server.moe_log.enabled = true;
-        ctx_server.moe_log.log_file << "=== MoE Expert Selection Log (Server Mode) ===\n\n";
+        // CSV header
+        ctx_server.moe_log.log_file << "layer_id,expert_ids\n";
         LOG_INF("MoE expert logging enabled, writing to: %s\n", "moe_expert_selection.log");
     } else {
         LOG_WRN("Failed to open MoE log file: %s\n", "moe_expert_selection.log");
