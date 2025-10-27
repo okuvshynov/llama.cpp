@@ -23,6 +23,7 @@
 #include <cstddef>
 #include <cinttypes>
 #include <deque>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <signal.h>
@@ -96,6 +97,149 @@ static bool server_task_type_need_embd(server_task_type task_type) {
         default:
             return false;
     }
+}
+
+// MoE expert logging support
+struct moe_logging_data {
+    std::ofstream log_file;
+    std::mutex log_mutex;
+    bool enabled = false;
+};
+
+static bool moe_expert_logger(struct ggml_tensor * t, bool ask, void * user_data) {
+    auto * data = (moe_logging_data *) user_data;
+
+    if (!data || !data->enabled) {
+        return false;
+    }
+
+    if (ask) {
+        // Only interested in MoE-related tensors
+        std::string name(t->name);
+        // Skip reshaped variants (they're duplicates)
+        if (name.find("(reshaped)") != std::string::npos) {
+            return false;
+        }
+        return name.find("ffn_moe") != std::string::npos;
+    }
+
+    std::string tensor_name(t->name);
+
+    // Extract layer number from tensor name
+    // Supports both formats:
+    // - "blk.10.ffn_moe_logits" (DeepSeek V3 style)
+    // - "ffn_moe_logits-10" (GLM-4.6 style with hyphen suffix)
+    int layer = -1;
+
+    // Try blk.X. format first
+    if (sscanf(tensor_name.c_str(), "blk.%d.", &layer) != 1) {
+        // Try hyphen suffix format
+        const char* hyphen = strrchr(tensor_name.c_str(), '-');
+        if (hyphen && sscanf(hyphen, "-%d", &layer) == 1) {
+            // Successfully parsed layer from hyphen suffix
+        } else {
+            // Not a layer-specific tensor, skip
+            return true;
+        }
+    }
+
+    // Copy tensor data from GPU if needed
+    std::vector<uint8_t> buffer;
+    uint8_t * tensor_data = (uint8_t *) t->data;
+
+    if (!ggml_backend_buffer_is_host(t->buffer)) {
+        size_t n_bytes = ggml_nbytes(t);
+        buffer.resize(n_bytes);
+        ggml_backend_tensor_get(t, buffer.data(), 0, n_bytes);
+        tensor_data = buffer.data();
+    }
+
+    std::lock_guard<std::mutex> lock(data->log_mutex);
+
+    // Parse different tensor types
+    if (tensor_name.find("ffn_moe_logits") != std::string::npos) {
+        // Shape: [n_expert, n_tokens]
+        int n_experts = t->ne[0];
+        int n_tokens = t->ne[1];
+
+        float * logits = (float *) tensor_data;
+
+        data->log_file << "Layer " << layer << " - Raw Logits:\n";
+        data->log_file << "  n_experts=" << n_experts << ", n_tokens=" << n_tokens << "\n";
+        for (int tok = 0; tok < n_tokens; tok++) {
+            data->log_file << "  Token " << tok << ": [";
+            for (int exp = 0; exp < std::min(10, n_experts); exp++) {
+                data->log_file << logits[tok * n_experts + exp];
+                if (exp < std::min(10, n_experts) - 1) data->log_file << ", ";
+            }
+            if (n_experts > 10) data->log_file << ", ...";
+            data->log_file << "]\n";
+        }
+
+    } else if (tensor_name.find("ffn_moe_probs") != std::string::npos &&
+               tensor_name.find("biased") == std::string::npos) {
+        // Shape: [n_expert, n_tokens] or [1, n_expert, n_tokens]
+        int n_experts = t->ne[1] > 1 ? t->ne[1] : t->ne[0];
+        int n_tokens = t->ne[2] > 1 ? t->ne[2] : (t->ne[1] > 1 ? t->ne[2] : t->ne[1]);
+
+        float * probs = (float *) tensor_data;
+
+        data->log_file << "Layer " << layer << " - Router Probabilities:\n";
+        for (int tok = 0; tok < std::min(n_tokens, 3); tok++) {
+            data->log_file << "  Token " << tok << ": [";
+            for (int exp = 0; exp < std::min(10, n_experts); exp++) {
+                data->log_file << probs[tok * n_experts + exp];
+                if (exp < std::min(10, n_experts) - 1) data->log_file << ", ";
+            }
+            if (n_experts > 10) data->log_file << ", ...";
+            data->log_file << "]\n";
+        }
+
+    } else if (tensor_name.find("ffn_moe_topk") != std::string::npos) {
+        // Shape: [n_expert_used, n_tokens]
+        // This contains the INDICES of selected experts
+        int n_expert_used = t->ne[0];
+        int n_tokens = t->ne[1];
+
+        int32_t * indices = (int32_t *) tensor_data;
+
+        data->log_file << "Layer " << layer << " - Selected Expert IDs (top-"
+                      << n_expert_used << "):\n";
+        for (int tok = 0; tok < n_tokens; tok++) {
+            data->log_file << "  Token " << tok << ": [";
+            for (int i = 0; i < n_expert_used; i++) {
+                data->log_file << indices[tok * n_expert_used + i];
+                if (i < n_expert_used - 1) data->log_file << ", ";
+            }
+            data->log_file << "]\n";
+        }
+
+    } else if (tensor_name.find("ffn_moe_weights") != std::string::npos &&
+               tensor_name.find("_sum") == std::string::npos &&
+               tensor_name.find("_norm") == std::string::npos &&
+               tensor_name.find("_scaled") == std::string::npos) {
+        // Shape: [1, n_expert_used, n_tokens] or [n_expert_used, n_tokens]
+        int n_expert_used = t->ne[1] > 1 ? t->ne[1] : t->ne[0];
+        int n_tokens = t->ne[2] > 1 ? t->ne[2] : (t->ne[1] > 1 ? t->ne[2] : t->ne[1]);
+
+        float * weights = (float *) tensor_data;
+
+        data->log_file << "Layer " << layer << " - Expert Routing Weights:\n";
+        for (int tok = 0; tok < n_tokens; tok++) {
+            data->log_file << "  Token " << tok << ": [";
+            float sum = 0.0f;
+            for (int i = 0; i < n_expert_used; i++) {
+                float w = weights[tok * n_expert_used + i];
+                data->log_file << w;
+                if (i < n_expert_used - 1) data->log_file << ", ";
+                sum += w;
+            }
+            data->log_file << "] (sum=" << sum << ")\n";
+        }
+    }
+
+    data->log_file.flush();
+    return true;
 }
 
 static bool server_task_type_need_logits(server_task_type task_type) {
@@ -2347,6 +2491,9 @@ struct server_context {
 
     int32_t n_ctx; // total context for all clients / slots
 
+    // MoE expert logging
+    moe_logging_data moe_log;
+
     // slots / clients
     std::vector<server_slot> slots;
 
@@ -2389,6 +2536,14 @@ struct server_context {
         SRV_INF("loading model '%s'\n", params.model.path.c_str());
 
         params_base = params;
+
+        // Set up MoE logging callback if enabled
+        if (moe_log.enabled && moe_log.log_file.is_open()) {
+            params_base.cb_eval = moe_expert_logger;
+            params_base.cb_eval_user_data = &moe_log;
+            params_base.warmup = false;  // Important: warmup skips callbacks
+            SRV_INF("MoE expert logging %s\n", "enabled");
+        }
 
         llama_init = common_init_from_params(params_base);
 
@@ -4414,6 +4569,16 @@ int main(int argc, char ** argv) {
 
     // struct that contains llama context and inference
     server_context ctx_server;
+
+    // Set up MoE logging (hardcoded to moe_expert_selection.log)
+    ctx_server.moe_log.log_file.open("moe_expert_selection.log");
+    if (ctx_server.moe_log.log_file.is_open()) {
+        ctx_server.moe_log.enabled = true;
+        ctx_server.moe_log.log_file << "=== MoE Expert Selection Log (Server Mode) ===\n\n";
+        LOG_INF("MoE expert logging enabled, writing to: %s\n", "moe_expert_selection.log");
+    } else {
+        LOG_WRN("Failed to open MoE log file: %s\n", "moe_expert_selection.log");
+    }
 
     llama_backend_init();
     llama_numa_init(params.numa);
