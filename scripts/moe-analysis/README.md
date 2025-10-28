@@ -98,6 +98,45 @@ logits = logits + bias        # Add bias (if present)
 probs = softmax(logits)
 ```
 
+### 4. `compare_gate_experts.py`
+
+Compare expert selection using same gate weights but different inputs from different model quantizations.
+
+**Usage:**
+```bash
+# First, extract gate inputs for each model quantization
+cat moe_log_f16.log | grep "gate_input,20,0" > inputs_f16.txt
+cat moe_log_q4.log | grep "gate_input,20,0" > inputs_q4.txt
+
+# Compare expert selections
+python compare_gate_experts.py \
+  --weight layer_20_gate_weight.npy \
+  --bias layer_20_gate_bias.npy \
+  --inputs-a inputs_f16.txt \
+  --inputs-b inputs_q4.txt \
+  --top-k 8
+```
+
+**Input format:**
+- One vector per line, space-separated floats
+- Accepts both formats:
+  - `gate_input,20,0,0.123 -0.456 ...` (prefix will be stripped)
+  - `0.123 -0.456 0.789 ...` (plain values)
+
+**Metrics reported:**
+- **Precision/Recall**: Fraction of matching experts in top-k selections
+- **F1 Score**: Harmonic mean of precision and recall
+- **Exact Match Rate**: Percentage of samples with identical expert sets
+- **Top-1 Match Rate**: Percentage of samples with same top expert
+- **Kendall's Tau**: Rank correlation for common experts
+- **Per-sample statistics**: Mean and standard deviation across all samples
+
+**Use cases:**
+- Test if quantized models (F16 vs Q4 vs Q8) produce different gate inputs
+- Measure how quantization of attention/expert weights affects routing
+- Validate that model compression preserves expert selection patterns
+- Understand routing sensitivity to representation drift from quantization
+
 ## Data Formats
 
 ### Expert Selection Log Format

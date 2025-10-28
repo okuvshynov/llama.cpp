@@ -100,13 +100,24 @@ def extract_gate_tensors(model_path: str, layer_id: int, output_dir: str = "."):
     # Dequantize weight
     print(f"  Dequantizing...")
     weight_data = dequantize_tensor(weight_tensor)
+    print(f"  After dequantization shape: {weight_data.shape}")
 
     # Reshape to [n_embd, n_expert] if needed
     if len(weight_tensor.shape) > 2:
         # Sometimes shape is [n_embd, n_expert, 1, 1]
         weight_data = weight_data.reshape(weight_tensor.shape[0], weight_tensor.shape[1])
+        print(f"  After reshape: {weight_data.shape}")
 
     print(f"  Final shape: {weight_data.shape}")
+    print(f"  Note: For gate_input @ weight, need shape [n_embd, n_expert]")
+
+    # Check if we need to transpose
+    # Original GGUF shape is [n_embd, n_expert], but dequantization might give us [n_expert, n_embd]
+    # We can infer: n_embd is typically much larger than n_expert
+    if weight_data.shape[0] < weight_data.shape[1]:
+        print(f"  Shape appears to be [n_expert, n_embd], transposing...")
+        weight_data = weight_data.T
+        print(f"  After transpose: {weight_data.shape}")
 
     # Save weight as numpy
     weight_npy_path = output_path / f"layer_{layer_id}_gate_weight.npy"
