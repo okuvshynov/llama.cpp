@@ -121,7 +121,8 @@ def get_top_k_experts(logits: np.ndarray, k: int) -> np.ndarray:
 
 def compute_metrics(original_experts: np.ndarray,
                     candidate_experts: np.ndarray,
-                    k: int) -> Dict[str, float]:
+                    k: int,
+                    all_logits_b: Optional[np.ndarray] = None) -> Dict[str, float]:
     """
     Compute precision, recall, and ranking metrics.
 
@@ -129,6 +130,7 @@ def compute_metrics(original_experts: np.ndarray,
         original_experts: [k] indices of experts selected by original weights
         candidate_experts: [k] indices of experts selected by candidate weights
         k: number of top experts
+        all_logits_b: [n_expert] all logits from candidate input (optional)
 
     Returns:
         Dictionary of metrics
@@ -147,6 +149,22 @@ def compute_metrics(original_experts: np.ndarray,
 
     # Exact match: all experts are the same (order doesn't matter)
     exact_match = 1.0 if original_set == candidate_set else 0.0
+
+    # Coverage metric: How many top-N from B do we need to cover top-K from A?
+    coverage_k = k  # Default to k if we can't compute
+    if all_logits_b is not None:
+        # Get all experts sorted by logits from B
+        all_experts_b_sorted = np.argsort(all_logits_b)[::-1]  # Descending order
+
+        # Find how many we need to take from B to cover all experts from A
+        for n in range(k, len(all_experts_b_sorted) + 1):
+            top_n_from_b = set(all_experts_b_sorted[:n])
+            if original_set.issubset(top_n_from_b):
+                coverage_k = n
+                break
+        else:
+            # If we can't cover all, set to total number of experts
+            coverage_k = len(all_experts_b_sorted)
 
     # Ranking metrics
     # Kendall's Tau: correlation between rankings
@@ -187,6 +205,7 @@ def compute_metrics(original_experts: np.ndarray,
         'top1_match': top1_match,
         'kendall_tau': kendall_tau,
         'intersection_size': intersection,
+        'coverage_k': coverage_k,
     }
 
 
@@ -237,8 +256,8 @@ def compare_gate_inputs(inputs_a: List[np.ndarray],
         experts_a = get_top_k_experts(logits_a, top_k)
         experts_b = get_top_k_experts(logits_b, top_k)
 
-        # Compute metrics
-        metrics = compute_metrics(experts_a, experts_b, top_k)
+        # Compute metrics (pass logits_b for coverage metric)
+        metrics = compute_metrics(experts_a, experts_b, top_k, all_logits_b=logits_b)
 
         # Store per-sample results
         sample_result = {
@@ -391,12 +410,18 @@ Input file format (one vector per line):
     print(f"Exact Match Rate:           {agg['exact_match_mean']:.4f}")
     print(f"Top-1 Match Rate:           {agg['top1_match_mean']:.4f}")
     print(f"Kendall's Tau (mean ± std): {agg['kendall_tau_mean']:.4f} ± {agg['kendall_tau_std']:.4f}")
+    print(f"Coverage K (mean ± std):    {agg['coverage_k_mean']:.1f} ± {agg['coverage_k_std']:.1f}")
     print()
 
     print("Interpretation:")
     print(f"  - {agg['exact_match_mean']*100:.1f}% of samples have identical expert selections")
     print(f"  - {agg['top1_match_mean']*100:.1f}% of samples have the same top-1 expert")
     print(f"  - Average {agg['intersection_size_mean']:.1f}/{args.top_k} experts match per sample")
+    print(f"  - Need top-{agg['coverage_k_mean']:.1f} from model B to cover top-{args.top_k} from model A")
+    print()
+    print("Coverage K interpretation:")
+    print(f"  - Perfect match: Coverage K = {args.top_k} (top-{args.top_k} from B covers top-{args.top_k} from A)")
+    print(f"  - Higher values indicate more ranking shift between models")
     print()
     print("This shows how different model quantizations (e.g., F16 vs Q4) affect")
     print("which experts get selected, even with the same gate weights.")
