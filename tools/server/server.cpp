@@ -175,6 +175,25 @@ static bool moe_expert_logger(struct ggml_tensor * t, bool ask, void * user_data
         }
     }
 
+    // Log gate input for layers 20-24 only (due to volume)
+    if (tensor_name.find("ffn_moe_gate_inp") != std::string::npos && layer >= 20 && layer < 25) {
+        // Shape: [n_embd, n_tokens]
+        int n_embd = t->ne[0];
+        int n_tokens = t->ne[1];
+
+        float * gate_inp = (float *) tensor_data;
+
+        // Log each token's gate input
+        for (int tok = 0; tok < n_tokens; tok++) {
+            data->log_file << "gate_input," << layer << "," << tok << ",";
+            for (int i = 0; i < n_embd; i++) {
+                data->log_file << gate_inp[tok * n_embd + i];
+                if (i < n_embd - 1) data->log_file << " ";
+            }
+            data->log_file << "\n";
+        }
+    }
+
     // Commented out - can be re-enabled for detailed analysis
     /*
     if (tensor_name.find("ffn_moe_logits") != std::string::npos) {

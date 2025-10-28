@@ -901,6 +901,7 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     ggml_tensor * logits = nullptr;
 
     if (probs_in == nullptr) {
+        cb(cur, "ffn_moe_gate_inp", il); // Log input to the gate (router)
         logits = build_lora_mm(gate_inp, cur); // [n_expert, n_tokens]
         cb(logits, "ffn_moe_logits", il);
     } else {
