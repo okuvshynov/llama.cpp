@@ -52,6 +52,52 @@ python gate_input_analysis.py gates_inputs.log
 - Computes how gate inputs change between consecutive layers
 - Helps understand how token representations evolve through MoE layers
 
+### 3. `extract_gate_tensors.py`
+
+Extracts MoE gate (router) weights and bias tensors from a GGUF model.
+
+**Usage:**
+```bash
+# Extract tensors for a single layer
+python extract_gate_tensors.py model.gguf 20
+
+# Extract to specific directory
+python extract_gate_tensors.py model.gguf 20 --output-dir tensors/
+
+# Extract multiple layers
+for layer in 20 21 22 23 24; do
+  python extract_gate_tensors.py model.gguf $layer --output-dir tensors/
+done
+```
+
+**Extracts:**
+- `blk.{layer}.ffn_gate_inp.weight`: Router weight matrix `[n_embd, n_expert]`
+- `blk.{layer}.exp_probs_b.bias`: Expert selection bias `[n_expert]` (if present)
+
+**Output formats:**
+- NumPy arrays (`.npy`) - always saved
+- PyTorch tensors (`.pt`) - saved if PyTorch is available
+
+**Use case:**
+Allows you to reproduce the expert selection locally using the logged gate inputs:
+```python
+import numpy as np
+
+# Load extracted tensors
+weight = np.load('layer_20_gate_weight.npy')  # [n_embd, n_expert]
+bias = np.load('layer_20_gate_bias.npy')      # [n_expert]
+
+# Load gate input from log
+gate_input = ...  # [n_embd] from gates_inputs.log
+
+# Compute logits (what the model does internally)
+logits = gate_input @ weight  # [n_expert]
+logits = logits + bias        # Add bias (if present)
+
+# Apply gating function (softmax or sigmoid depending on model)
+probs = softmax(logits)
+```
+
 ## Data Formats
 
 ### Expert Selection Log Format
