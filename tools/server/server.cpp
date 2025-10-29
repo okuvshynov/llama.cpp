@@ -26,6 +26,7 @@
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <signal.h>
 #include <thread>
 #include <unordered_map>
@@ -104,6 +105,7 @@ struct moe_logging_data {
     std::ofstream log_file;
     std::mutex log_mutex;
     bool enabled = false;
+    std::set<int32_t> gate_input_layers; // which layers to log gate inputs for
 };
 
 static bool moe_expert_logger(struct ggml_tensor * t, bool ask, void * user_data) {
@@ -175,8 +177,10 @@ static bool moe_expert_logger(struct ggml_tensor * t, bool ask, void * user_data
         }
     }
 
-    // Log gate input for layers 20-24 only (due to volume)
-    if (tensor_name.find("ffn_moe_gate_inp") != std::string::npos && layer >= 20 && layer < 25) {
+    // Log gate input for configured layers only
+    if (tensor_name.find("ffn_moe_gate_inp") != std::string::npos &&
+        !data->gate_input_layers.empty() &&
+        data->gate_input_layers.count(layer) > 0) {
         // Shape: [n_embd, n_tokens]
         int n_embd = t->ne[0];
         int n_tokens = t->ne[1];
@@ -4584,9 +4588,21 @@ int main(int argc, char ** argv) {
     ctx_server.moe_log.log_file.open("moe_expert_selection.log");
     if (ctx_server.moe_log.log_file.is_open()) {
         ctx_server.moe_log.enabled = true;
+        // Copy gate input layer configuration from params
+        ctx_server.moe_log.gate_input_layers.insert(
+            params.moe_gate_input_layers.begin(),
+            params.moe_gate_input_layers.end()
+        );
         // CSV header
         ctx_server.moe_log.log_file << "layer_id,expert_ids\n";
         LOG_INF("MoE expert logging enabled, writing to: %s\n", "moe_expert_selection.log");
+        if (!ctx_server.moe_log.gate_input_layers.empty()) {
+            LOG_INF("Gate input logging enabled for layers:");
+            for (auto layer : ctx_server.moe_log.gate_input_layers) {
+                LOG_INF(" %d", layer);
+            }
+            LOG_INF("\n");
+        }
     } else {
         LOG_WRN("Failed to open MoE log file: %s\n", "moe_expert_selection.log");
     }

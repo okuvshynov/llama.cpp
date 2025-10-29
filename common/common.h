@@ -457,6 +457,9 @@ struct common_params {
 
     float slot_prompt_similarity = 0.1f;
 
+    // MoE logging params
+    std::vector<int32_t> moe_gate_input_layers; // layers to log gate inputs for (empty = disabled)
+
     // batched-bench params
     bool is_pp_shared = false;
 

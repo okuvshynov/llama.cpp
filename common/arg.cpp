@@ -3497,6 +3497,14 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_examples({LLAMA_EXAMPLE_SERVER}));
     add_opt(common_arg(
+        {"--moe-gate-input-log-layers"}, "LAYERS",
+        "comma-separated list of MoE layer IDs to log gate inputs for (e.g., 20,21,22,23,24; default: disabled)",
+        [](common_params & params, const std::string & value) {
+            auto layers = string_split<int>(value, ',');
+            params.moe_gate_input_layers.insert(params.moe_gate_input_layers.end(), layers.begin(), layers.end());
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_MOE_GATE_INPUT_LOG_LAYERS"));
+    add_opt(common_arg(
         {"--lora-init-without-apply"},
         string_format("load LoRA adapters without applying them (apply later via POST /lora-adapters) (default: %s)", params.lora_init_without_apply ? "enabled" : "disabled"),
         [](common_params & params) {
