@@ -3,6 +3,9 @@
 #include "llama.h"
 #include "common.h"
 
+#include <vector>
+#include <string>
+
 struct common_speculative;
 
 struct common_speculative_params {
@@ -10,6 +13,26 @@ struct common_speculative_params {
     int n_reuse = 256;
 
     float p_min = 0.75f; // min probability required to accept a token in the draft
+};
+
+// Log data for a single draft token position
+struct common_speculative_draft_token {
+    int            pos;      // position in draft sequence
+    llama_token    id;       // selected token id
+    float          prob;     // probability of selected token
+    float          entropy;  // entropy of distribution (top-k)
+    std::vector<std::pair<llama_token, float>> top_k; // top-k candidates: (id, prob)
+};
+
+// Log data for an entire draft generation round
+struct common_speculative_draft_log {
+    std::vector<common_speculative_draft_token> tokens;
+    std::string stop_reason; // "p_min", "n_max", or "complete"
+
+    void clear() {
+        tokens.clear();
+        stop_reason.clear();
+    }
 };
 
 struct common_speculative * common_speculative_init(
@@ -28,8 +51,10 @@ void common_speculative_add_replacement_tgt_dft(
         const char *source, const char *dest);
 
 // sample up to n_draft tokens and add them to the batch using the draft model
+// if draft_log is non-null, detailed draft data will be collected for logging
 llama_tokens common_speculative_gen_draft(
                struct common_speculative * spec,
         struct common_speculative_params   params,
                       const llama_tokens & prompt,
-                             llama_token   id_last);
+                             llama_token   id_last,
+       struct common_speculative_draft_log * draft_log = nullptr);

@@ -157,6 +157,7 @@ struct server_slot {
 
     llama_token sampled; // in speculative mode, this is the last accepted token
     llama_tokens drafted;
+    common_speculative_draft_log draft_log; // for detailed speculation logging
 
     // stats
     size_t n_sent_text = 0; // number of sent text character
@@ -554,7 +555,15 @@ struct server_context_impl {
     common_chat_templates_ptr chat_templates;
     oaicompat_parser_options  oai_parser_opt;
 
+    // speculation logging
+    FILE * spec_log_file = nullptr;
+    int64_t spec_round_id = 0;
+
     ~server_context_impl() {
+        if (spec_log_file) {
+            fclose(spec_log_file);
+            spec_log_file = nullptr;
+        }
         mtmd_free(mctx);
 
         // Clear any sampling context
@@ -641,6 +650,16 @@ struct server_context_impl {
 
             // the context is not needed - we will create one for each slot
             llama_init_dft->free_context();
+
+            // open speculation log file if configured
+            if (!params_base.speculative.spec_log_file.empty()) {
+                spec_log_file = fopen(params_base.speculative.spec_log_file.c_str(), "w");
+                if (spec_log_file == nullptr) {
+                    SRV_ERR("failed to open speculation log file '%s'\n", params_base.speculative.spec_log_file.c_str());
+                    return false;
+                }
+                SRV_INF("speculation logging enabled, writing to '%s'\n", params_base.speculative.spec_log_file.c_str());
+            }
         }
 
         chat_templates = common_chat_templates_init(model, params_base.chat_template);
@@ -1867,7 +1886,10 @@ struct server_context_impl {
                 params_spec.n_reuse = llama_n_ctx(slot.ctx_dft) - slot.task->params.speculative.n_max;
                 params_spec.p_min   = slot.task->params.speculative.p_min;
                 const llama_tokens & cached_text_tokens = slot.prompt.tokens.get_text_tokens();
-                llama_tokens draft = common_speculative_gen_draft(slot.spec, params_spec, cached_text_tokens, slot.sampled);
+
+                // pass draft_log pointer if speculation logging is enabled
+                common_speculative_draft_log * draft_log_ptr = spec_log_file ? &slot.draft_log : nullptr;
+                llama_tokens draft = common_speculative_gen_draft(slot.spec, params_spec, cached_text_tokens, slot.sampled, draft_log_ptr);
 
                 // add the sampled token to the batch
                 slot.i_batch_dft.push_back(batch.n_tokens);
@@ -2629,6 +2651,58 @@ struct server_context_impl {
                 }
 
                 SLT_DBG(slot, "accepted %d/%d draft tokens, new n_tokens = %d\n", (int) ids.size() - 1, (int) n_draft, slot.prompt.n_tokens());
+
+                // write speculation log entry if logging is enabled
+                if (spec_log_file && !slot.draft_log.tokens.empty()) {
+                    const int n_accepted = (int) ids.size() - 1;
+                    const int rej_pos = (n_accepted < (int) n_draft) ? n_accepted : -1;
+
+                    // build JSON object
+                    json log_entry;
+                    log_entry["ts_ms"] = ggml_time_ms();
+                    log_entry["slot_id"] = slot.id;
+                    log_entry["prompt_pos"] = slot.prompt.n_tokens();
+                    log_entry["round_id"] = spec_round_id++;
+
+                    // draft section
+                    json draft_json;
+                    draft_json["n"] = (int) slot.draft_log.tokens.size();
+                    draft_json["stop_reason"] = slot.draft_log.stop_reason;
+
+                    json tokens_json = json::array();
+                    for (const auto & tok : slot.draft_log.tokens) {
+                        json tok_json;
+                        tok_json["pos"] = tok.pos;
+                        tok_json["id"] = tok.id;
+                        tok_json["p"] = tok.prob;
+                        tok_json["entropy"] = tok.entropy;
+
+                        json top_k_json = json::array();
+                        for (const auto & cand : tok.top_k) {
+                            top_k_json.push_back({cand.first, cand.second});
+                        }
+                        tok_json["top_k"] = std::move(top_k_json);
+
+                        tokens_json.push_back(std::move(tok_json));
+                    }
+                    draft_json["tokens"] = std::move(tokens_json);
+                    log_entry["draft"] = std::move(draft_json);
+
+                    // verify section
+                    json verify_json;
+                    verify_json["n_accepted"] = n_accepted;
+                    verify_json["rej_pos"] = rej_pos;
+                    verify_json["target_id"] = ids.back(); // the token target model chose
+                    log_entry["verify"] = std::move(verify_json);
+
+                    // write as single line
+                    std::string line = log_entry.dump() + "\n";
+                    fputs(line.c_str(), spec_log_file);
+                    fflush(spec_log_file);
+
+                    // clear draft log for next round
+                    slot.draft_log.clear();
+                }
             }
         }
 

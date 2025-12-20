@@ -7,6 +7,7 @@
 #include "sampling.h"
 
 #include <cstring>
+#include <cmath>
 #include <algorithm>
 #include <map>
 
@@ -186,7 +187,12 @@ llama_tokens common_speculative_gen_draft(
         struct common_speculative * spec,
         struct common_speculative_params params,
         const llama_tokens & prompt_tgt_main_model, // specified in target model vocab
-        llama_token id_last) {
+        llama_token id_last,
+        struct common_speculative_draft_log * draft_log) {
+    // clear log if provided
+    if (draft_log) {
+        draft_log->clear();
+    }
     auto & batch  = spec->batch;
     auto & ctx_tgt = spec->ctx_tgt;
     auto & ctx_dft = spec->ctx_dft;
@@ -327,16 +333,49 @@ llama_tokens common_speculative_gen_draft(
         // add drafted token for each sequence
         const llama_token id = cur_p->data[0].id;
 
+        // collect log data if requested
+        if (draft_log) {
+            common_speculative_draft_token token_log;
+            token_log.pos  = i;
+            token_log.id   = id;
+            token_log.prob = cur_p->data[0].p;
+
+            // collect top-k candidates (up to 10)
+            const int k_max = std::min(10, (int) cur_p->size);
+            token_log.top_k.reserve(k_max);
+            for (int k = 0; k < k_max; ++k) {
+                token_log.top_k.emplace_back(cur_p->data[k].id, cur_p->data[k].p);
+            }
+
+            // compute entropy over top-k
+            float entropy = 0.0f;
+            for (int k = 0; k < k_max; ++k) {
+                float p = cur_p->data[k].p;
+                if (p > 0.0f) {
+                    entropy -= p * std::log2(p);
+                }
+            }
+            token_log.entropy = entropy;
+
+            draft_log->tokens.push_back(std::move(token_log));
+        }
+
         common_sampler_accept(smpl, id, true);
 
         result.push_back(id);
 
         if (params.n_draft <= (int) result.size()) {
+            if (draft_log) {
+                draft_log->stop_reason = "n_max";
+            }
             break;
         }
 
         // only collect very high-confidence draft tokens
         if (cur_p->data[0].p < params.p_min) {
+            if (draft_log) {
+                draft_log->stop_reason = "p_min";
+            }
             break;
         }
 
@@ -346,6 +385,11 @@ llama_tokens common_speculative_gen_draft(
         llama_decode(ctx_dft, batch);
 
         prompt_dft.push_back(id);
+    }
+
+    // if we exited normally (loop completed without break), mark as complete
+    if (draft_log && draft_log->stop_reason.empty()) {
+        draft_log->stop_reason = "complete";
     }
 
     if (!spec->vocab_dft_compatible) {
