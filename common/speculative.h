@@ -29,9 +29,15 @@ struct common_speculative_draft_log {
     std::vector<common_speculative_draft_token> tokens;
     std::string stop_reason; // "p_min", "n_max", or "complete"
 
+    // Timing data (microseconds)
+    int64_t t_draft_us  = 0;  // time spent generating draft tokens
+    int64_t t_verify_us = 0;  // time spent verifying (target model decode)
+
     void clear() {
         tokens.clear();
         stop_reason.clear();
+        t_draft_us  = 0;
+        t_verify_us = 0;
     }
 };
 

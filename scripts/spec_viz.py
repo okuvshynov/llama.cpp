@@ -58,6 +58,11 @@ def visualize_round(r, show_entropy=False):
     n_accepted = r["verify"]["n_accepted"]
     n_drafted = r["draft"]["n"]
 
+    # Get timing data if available
+    timing = r.get("timing", {})
+    t_draft_us = timing.get("t_draft_us", 0)
+    t_verify_us = timing.get("t_verify_us", 0)
+
     # Build the probability/entropy line
     line = ""
     for i, t in enumerate(tokens):
@@ -79,7 +84,7 @@ def visualize_round(r, show_entropy=False):
         else:
             line += f" {char}"
 
-    return n_accepted, n_drafted, line
+    return n_accepted, n_drafted, line, t_draft_us, t_verify_us
 
 
 def main():
@@ -121,23 +126,48 @@ def main():
     print("[x] = last accepted   ✗x = first rejected (if any)")
     print("=" * 80)
 
+    # Check if timing data is available
+    has_timing = any("timing" in r for r in rounds)
+
     for slot_id, slot_rounds in sorted(slots.items()):
         print(f"\nSlot {slot_id} ({len(slot_rounds)} rounds)")
-        print("-" * 80)
-        print(f"{'Rnd':>4} {'Acc':>3}/{'Dft':<3} {'Vis':<}")
-        print("-" * 80)
+        print("-" * 120 if has_timing else "-" * 80)
+        if has_timing:
+            print(f"{'Rnd':>4} {'Acc':>3}/{'Dft':<3} {'Draft':>7} {'Verify':>7} {'Vis':<}")
+        else:
+            print(f"{'Rnd':>4} {'Acc':>3}/{'Dft':<3} {'Vis':<}")
+        print("-" * 120 if has_timing else "-" * 80)
+
+        total_t_draft = 0
+        total_t_verify = 0
 
         for r in slot_rounds:
-            n_accepted, n_drafted, vis = visualize_round(r, show_entropy)
+            n_accepted, n_drafted, vis, t_draft_us, t_verify_us = visualize_round(r, show_entropy)
             round_id = r["round_id"]
-            print(f"{round_id:>4} {n_accepted:>3}/{n_drafted:<3} {vis}")
+            total_t_draft += t_draft_us
+            total_t_verify += t_verify_us
+
+            if has_timing:
+                t_draft_ms = t_draft_us / 1000
+                t_verify_ms = t_verify_us / 1000
+                print(f"{round_id:>4} {n_accepted:>3}/{n_drafted:<3} {t_draft_ms:>6.1f}ms {t_verify_ms:>6.1f}ms {vis}")
+            else:
+                print(f"{round_id:>4} {n_accepted:>3}/{n_drafted:<3} {vis}")
 
         # Summary stats
         total_drafted = sum(r["draft"]["n"] for r in slot_rounds)
         total_accepted = sum(r["verify"]["n_accepted"] for r in slot_rounds)
         rate = total_accepted / total_drafted if total_drafted > 0 else 0
-        print("-" * 80)
-        print(f"     {total_accepted:>3}/{total_drafted:<4} ({rate:.1%} acceptance)")
+        print("-" * 120 if has_timing else "-" * 80)
+        if has_timing and total_t_draft > 0:
+            total_t_draft_ms = total_t_draft / 1000
+            total_t_verify_ms = total_t_verify / 1000
+            avg_t_draft_ms = total_t_draft_ms / len(slot_rounds)
+            avg_t_verify_ms = total_t_verify_ms / len(slot_rounds)
+            print(f"     {total_accepted:>3}/{total_drafted:<4} ({rate:.1%} acceptance)  "
+                  f"Avg: {avg_t_draft_ms:.1f}ms draft, {avg_t_verify_ms:.1f}ms verify")
+        else:
+            print(f"     {total_accepted:>3}/{total_drafted:<4} ({rate:.1%} acceptance)")
 
     # Position-wise acceptance histogram
     print("\n" + "=" * 80)

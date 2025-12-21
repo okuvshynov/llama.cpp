@@ -38,6 +38,10 @@ JSON Lines format, one object per speculation round:
     "n_accepted": 3,
     "rej_pos": 3,
     "target_id": 7890
+  },
+  "timing": {
+    "t_draft_us": 12500,
+    "t_verify_us": 45000
   }
 }
 ```
@@ -54,6 +58,8 @@ JSON Lines format, one object per speculation round:
 | `verify.n_accepted` | How many draft tokens were accepted |
 | `verify.rej_pos` | Position of first rejection (-1 if all accepted) |
 | `verify.target_id` | Token the target model selected |
+| `timing.t_draft_us` | Time spent generating draft tokens (microseconds) |
+| `timing.t_verify_us` | Time spent verifying with target model (microseconds) |
 
 ## Analysis Output
 

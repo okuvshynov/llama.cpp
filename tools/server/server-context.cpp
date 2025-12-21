@@ -558,6 +558,7 @@ struct server_context_impl {
     // speculation logging
     FILE * spec_log_file = nullptr;
     int64_t spec_round_id = 0;
+    int64_t t_last_decode_us = 0;  // time for last batch decode (for speculation timing)
 
     ~server_context_impl() {
         if (spec_log_file) {
@@ -1889,7 +1890,12 @@ struct server_context_impl {
 
                 // pass draft_log pointer if speculation logging is enabled
                 common_speculative_draft_log * draft_log_ptr = spec_log_file ? &slot.draft_log : nullptr;
+
+                const int64_t t_draft_start = ggml_time_us();
                 llama_tokens draft = common_speculative_gen_draft(slot.spec, params_spec, cached_text_tokens, slot.sampled, draft_log_ptr);
+                if (draft_log_ptr) {
+                    draft_log_ptr->t_draft_us = ggml_time_us() - t_draft_start;
+                }
 
                 // add the sampled token to the batch
                 slot.i_batch_dft.push_back(batch.n_tokens);
@@ -2429,6 +2435,9 @@ struct server_context_impl {
 
         int32_t i_next = 0;
 
+        // reset decode timing accumulator for this batch
+        t_last_decode_us = 0;
+
         // process the created batch of tokens
         for (int32_t i = 0; i < batch.n_tokens; i = i_next) {
             const int32_t n_tokens = std::min(n_batch, batch.n_tokens - i);
@@ -2443,7 +2452,13 @@ struct server_context_impl {
                 batch.logits   + i,
             };
 
+            const int64_t t_decode_start = ggml_time_us();
             const int ret = llama_decode(ctx, batch_view);
+            // synchronize to get accurate timing (decode is async on GPU)
+            if (spec_log_file) {
+                llama_synchronize(ctx);
+            }
+            t_last_decode_us += ggml_time_us() - t_decode_start;
 
             metrics.on_decoded(slots);
 
@@ -2622,6 +2637,11 @@ struct server_context_impl {
                 // update how many tokens out of those tested were accepted
                 slot.n_draft_accepted += ids.size() - 1;
 
+                // store verify timing for speculation logging
+                if (spec_log_file) {
+                    slot.draft_log.t_verify_us = t_last_decode_us;
+                }
+
                 // rollback to the state before sampling the draft tokens
                 slot.prompt.tokens.keep_first(slot.prompt.n_tokens() - n_draft);
 
@@ -2694,6 +2714,12 @@ struct server_context_impl {
                     verify_json["rej_pos"] = rej_pos;
                     verify_json["target_id"] = ids.back(); // the token target model chose
                     log_entry["verify"] = std::move(verify_json);
+
+                    // timing section (microseconds)
+                    json timing_json;
+                    timing_json["t_draft_us"]  = slot.draft_log.t_draft_us;
+                    timing_json["t_verify_us"] = slot.draft_log.t_verify_us;
+                    log_entry["timing"] = std::move(timing_json);
 
                     // write as single line
                     std::string line = log_entry.dump() + "\n";
