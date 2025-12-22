@@ -161,15 +161,17 @@ static bool dump_callback(struct ggml_tensor * t, bool ask, void * user_data) {
     std::string name(t->name);
 
     // Build target names for the layer we care about
-    std::string ffn_inp_name = "ffn_inp-" + std::to_string(cfg->target_layer);
+    // ffn_norm = MLP input (after RMSNorm, before projections)
+    // ffn_out = MLP output (after down projection, before residual add)
+    std::string ffn_norm_name = "ffn_norm-" + std::to_string(cfg->target_layer);
     std::string ffn_out_name = "ffn_out-" + std::to_string(cfg->target_layer);
 
-    bool is_ffn_inp = (name == ffn_inp_name);
+    bool is_ffn_norm = (name == ffn_norm_name);
     bool is_ffn_out = (name == ffn_out_name);
 
     if (ask) {
         // Return true only for tensors we want to capture
-        return is_ffn_inp || is_ffn_out;
+        return is_ffn_norm || is_ffn_out;
     }
 
     // Copy data from GPU if needed
@@ -214,7 +216,7 @@ static bool dump_callback(struct ggml_tensor * t, bool ask, void * user_data) {
     }
 
     // Save to file
-    if (is_ffn_inp && !cfg->dumped_ffn_inp) {
+    if (is_ffn_norm && !cfg->dumped_ffn_inp) {
         std::string path = cfg->output_dir + "/" + name + ".npy";
         save_npy_2d(path, float_ptr, rows, cols, false);
         cfg->dumped_ffn_inp = true;
@@ -435,7 +437,7 @@ int main(int argc, char ** argv) {
         }
 
         if (!cfg.dumped_ffn_inp) {
-            LOG_WRN("Did not capture ffn_inp for layer %d\n", layer_idx);
+            LOG_WRN("Did not capture ffn_norm for layer %d\n", layer_idx);
         }
         if (!cfg.dumped_ffn_out) {
             LOG_WRN("Did not capture ffn_out for layer %d\n", layer_idx);
