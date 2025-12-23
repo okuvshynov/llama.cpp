@@ -187,6 +187,38 @@ The threshold of 20 for switching between vec and regular kernels may not be opt
    ./build/bin/llama-verify-bench -m model.gguf -fa 1 -d 256,512,1024,2048 -nv 64 -r 5
    ```
 
+## Cost Breakdown Analysis
+
+### Attention vs FFN MatMuls
+
+Tested by varying context depth (attention scales with context, FFN doesn't):
+
+| Context | Time (ms) | Delta |
+|---------|-----------|-------|
+| 256     | 1006      | base  |
+| 512     | 1020      | +1.4% |
+| 1024    | 1021      | +1.5% |
+| 2048    | 1055      | +4.9% |
+
+**Finding**: 8x context increase only adds ~5% runtime.
+
+### Flash Attention vs MatMul-based Attention
+
+| n_verify | FA=yes (ms) | FA=no (ms) | FA Savings |
+|----------|-------------|------------|------------|
+| 64       | 1033        | 1038       | 0.5%       |
+| 128      | 1879        | 1898       | 1.1%       |
+
+### Estimated Cost Breakdown (batch=64, context=1024)
+
+| Component | % of Runtime | Optimization Priority |
+|-----------|--------------|----------------------|
+| FFN MatMuls | ~95% | **HIGH** - focus on `kernel_mul_mm` |
+| Attention | ~5% | LOW - flash attention already efficient |
+
+**Implication**: For batch 64+, optimizing matrix multiplication kernels
+will have 20x more impact than attention optimizations.
+
 ## Experimental Results
 
 ### NQPTG (Queries Per Threadgroup) Tuning
