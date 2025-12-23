@@ -28,6 +28,7 @@ llm_build_mistral3::llm_build_mistral3(const llama_model & model, const llm_grap
 
     for (int il = 0; il < n_layer; ++il) {
         ggml_tensor * inpSA = inpL;
+        cb(inpSA, "l_inp", il);
 
         // norm
         cur = build_norm(inpL,
