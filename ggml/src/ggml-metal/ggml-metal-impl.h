@@ -80,7 +80,7 @@
 #define FC_SSM_CONV                    900
 
 // op-specific constants
-#define OP_FLASH_ATTN_EXT_NQPTG 8
+#define OP_FLASH_ATTN_EXT_NQPTG 16  // was 8, optimized for batch 64+ (see docs/metal-batch-optimization-analysis.md)
 #define OP_FLASH_ATTN_EXT_NCPSG 64
 
 #define OP_FLASH_ATTN_EXT_VEC_NQPTG 1

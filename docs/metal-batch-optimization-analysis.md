@@ -187,6 +187,42 @@ The threshold of 20 for switching between vec and regular kernels may not be opt
    ./build/bin/llama-verify-bench -m model.gguf -fa 1 -d 256,512,1024,2048 -nv 64 -r 5
    ```
 
+## Experimental Results
+
+### NQPTG (Queries Per Threadgroup) Tuning
+
+Tested on M2 Ultra with Devstral 123B Q6_K, context depth 1024:
+
+| Config | n=64 (t/s) | n=128 (t/s) | n=256 (t/s) |
+|--------|------------|-------------|-------------|
+| Original (NQPTG=8) | 61.93 | 67.83 | 70.91 |
+| **NQPTG=16** | 62.30 | **68.00** | **71.38** |
+| NQPTG=32 | 61.69 | 67.35 | 70.69 |
+
+**Finding**: NQPTG=16 is optimal. Going to 32 causes regression, likely due to:
+- Increased shared memory pressure per threadgroup
+- Reduced parallelism (fewer threadgroups)
+
+### NCPSG (Cache Items Per Simdgroup) Tuning
+
+With NQPTG=16:
+
+| Config | n=64 (t/s) | n=128 (t/s) | n=256 (t/s) |
+|--------|------------|-------------|-------------|
+| NCPSG=64 (original) | 62.30 | 68.00 | 71.38 |
+| NCPSG=128 | 61.92 | 67.80 | 70.99 |
+
+**Finding**: NCPSG=64 remains optimal. Doubling to 128 causes slight regression.
+
+### Recommended Change
+
+```cpp
+// ggml-metal-impl.h line 83
+#define OP_FLASH_ATTN_EXT_NQPTG 16  // was 8
+```
+
+Expected improvement: ~0.5% for batch sizes 128+.
+
 ## Related Files
 
 - `tools/verify-bench/verify-bench.cpp` - Benchmark implementation
