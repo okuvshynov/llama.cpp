@@ -255,6 +255,51 @@ With NQPTG=16:
 
 Expected improvement: ~0.5% for batch sizes 128+.
 
+## Matrix Multiplication Optimization Analysis
+
+### Current kernel_mul_mm Structure
+
+Located in `ggml-metal.metal:8786-9090`:
+- Tile sizes: NR0=64 (rows), NR1=32 (batch), NK=32 (K dimension)
+- Threads: 128 per threadgroup (4 simdgroups)
+- Simdgroup layout: 2x2 grid, each covering 32x16 output elements
+- Shared memory: 6144-8192 bytes (sa=4096, sb=2048+)
+
+### Why Larger Tiles Are Complex
+
+Changing NR1 from 32 to 64 would require:
+1. Restructuring simdgroup layout from 2x2 to 2x4 (8 simdgroups)
+2. Doubling threads per threadgroup to 256
+3. Updating shared memory allocation
+4. Changing dispatch from `/32` to `/64`
+5. Modifying all simdgroup indexing patterns
+
+### Hardware Limitations
+
+```
+ggml_metal_device_init: has tensor = false
+```
+
+M2 Ultra lacks Metal4 tensor operations, which would enable the optimized
+`GGML_METAL_HAS_TENSOR` code path using `mpp::tensor_ops::matmul2d`.
+
+### Q6_K Dequantization
+
+The dequantize_q6_K function (`ggml-metal.metal:648-678`) involves:
+- Complex bit manipulation for 6-bit quantization
+- Multiple memory accesses per output element
+- Significant ALU operations
+
+Optimizing dequantization would require substantial code changes with
+uncertain benefits.
+
+### Future Optimization Opportunities
+
+1. **Metal4 tensor ops**: When available, enables hardware-accelerated matmul
+2. **Larger tiles**: Requires kernel restructuring but could improve batch 64+
+3. **Async dequantization**: Pipeline dequant with compute
+4. **Different quantization**: Some formats (Q4_K, Q5_K) may dequant faster
+
 ## Related Files
 
 - `tools/verify-bench/verify-bench.cpp` - Benchmark implementation
