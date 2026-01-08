@@ -10,6 +10,7 @@
 //
 
 enum llm_arch {
+    LLM_ARCH_LLAMA,
     LLM_ARCH_MISTRAL3,
     LLM_ARCH_UNKNOWN,
 };

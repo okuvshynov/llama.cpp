@@ -6,6 +6,7 @@
 #include <set>
 
 static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
+    { LLM_ARCH_LLAMA,    "llama"     },
     { LLM_ARCH_MISTRAL3, "mistral3"  },
     { LLM_ARCH_UNKNOWN,  "(unknown)" },
 };
@@ -387,6 +388,32 @@ static const std::map<llm_tensor, const char *> LLM_TENSOR_NAMES = {
 
 static std::set<llm_tensor> llm_get_tensor_names(llm_arch arch) {
     switch (arch) {
+        case LLM_ARCH_LLAMA:
+            return {
+                LLM_TENSOR_TOKEN_EMBD,
+                LLM_TENSOR_OUTPUT_NORM,
+                LLM_TENSOR_OUTPUT,
+                LLM_TENSOR_ROPE_FREQS,
+                LLM_TENSOR_ROPE_FACTORS_LONG,
+                LLM_TENSOR_ROPE_FACTORS_SHORT,
+                LLM_TENSOR_ATTN_NORM,
+                LLM_TENSOR_ATTN_Q,
+                LLM_TENSOR_ATTN_K,
+                LLM_TENSOR_ATTN_V,
+                LLM_TENSOR_ATTN_OUT,
+                LLM_TENSOR_ATTN_ROT_EMBD,
+                LLM_TENSOR_FFN_GATE_INP,
+                LLM_TENSOR_FFN_NORM,
+                LLM_TENSOR_FFN_GATE,
+                LLM_TENSOR_FFN_DOWN,
+                LLM_TENSOR_FFN_UP,
+                LLM_TENSOR_FFN_GATE_EXP,
+                LLM_TENSOR_FFN_DOWN_EXP,
+                LLM_TENSOR_FFN_UP_EXP,
+                LLM_TENSOR_FFN_GATE_EXPS,
+                LLM_TENSOR_FFN_DOWN_EXPS,
+                LLM_TENSOR_FFN_UP_EXPS,
+            };
         case LLM_ARCH_MISTRAL3:
             return {
                 LLM_TENSOR_TOKEN_EMBD,

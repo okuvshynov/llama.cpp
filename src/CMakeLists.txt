@@ -34,6 +34,7 @@ add_library(llama
             unicode-data.cpp
             unicode.cpp
             unicode.h
+            models/llama.cpp
             models/mistral3.cpp
             )
 

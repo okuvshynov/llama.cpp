@@ -24,117 +24,14 @@
 #include <sstream>
 #include <stdexcept>
 
+// Minimal llm_type_name for Devstral models
 const char * llm_type_name(llm_type type) {
     switch (type) {
-        case LLM_TYPE_14M:           return "14M";
-        case LLM_TYPE_17M:           return "17M";
-        case LLM_TYPE_22M:           return "22M";
-        case LLM_TYPE_33M:           return "33M";
-        case LLM_TYPE_47M:           return "47M";
-        case LLM_TYPE_60M:           return "60M";
-        case LLM_TYPE_70M:           return "70M";
-        case LLM_TYPE_80M:           return "80M";
-        case LLM_TYPE_109M:          return "109M";
-        case LLM_TYPE_137M:          return "137M";
-        case LLM_TYPE_140M:          return "140M";
-        case LLM_TYPE_149M:          return "149M";
-        case LLM_TYPE_160M:          return "160M";
-        case LLM_TYPE_190M:          return "190M";
-        case LLM_TYPE_220M:          return "220M";
-        case LLM_TYPE_250M:          return "250M";
-        case LLM_TYPE_256M:          return "256M";
-        case LLM_TYPE_270M:          return "270M";
-        case LLM_TYPE_335M:          return "335M";
-        case LLM_TYPE_350M:          return "350M";
-        case LLM_TYPE_360M:          return "360M";
-        case LLM_TYPE_395M:          return "395M";
-        case LLM_TYPE_410M:          return "410M";
-        case LLM_TYPE_450M:          return "450M";
-        case LLM_TYPE_475M:          return "475M";
-        case LLM_TYPE_558M:          return "558M";
-        case LLM_TYPE_700M:          return "700M";
-        case LLM_TYPE_770M:          return "770M";
-        case LLM_TYPE_780M:          return "780M";
-        case LLM_TYPE_950M:          return "950M";
-        case LLM_TYPE_0_3B:          return "0.3B";
-        case LLM_TYPE_0_5B:          return "0.5B";
-        case LLM_TYPE_0_6B:          return "0.6B";
-        case LLM_TYPE_1B:            return "1B";
-        case LLM_TYPE_1_2B:          return "1.2B";
-        case LLM_TYPE_1_3B:          return "1.3B";
-        case LLM_TYPE_1_4B:          return "1.4B";
-        case LLM_TYPE_1_5B:          return "1.5B";
-        case LLM_TYPE_1_6B:          return "1.6B";
-        case LLM_TYPE_1_7B:          return "1.7B";
-        case LLM_TYPE_1_8B:          return "1.8B";
-        case LLM_TYPE_2B:            return "2B";
-        case LLM_TYPE_2_6B:          return "2.6B";
-        case LLM_TYPE_2_8B:          return "2.8B";
-        case LLM_TYPE_2_9B:          return "2.9B";
-        case LLM_TYPE_3B:            return "3B";
-        case LLM_TYPE_4B:            return "4B";
-        case LLM_TYPE_6B:            return "6B";
-        case LLM_TYPE_6_9B:          return "6.9B";
-        case LLM_TYPE_7B:            return "7B";
-        case LLM_TYPE_8B:            return "8B";
-        case LLM_TYPE_9B:            return "9B";
-        case LLM_TYPE_11B:           return "11B";
-        case LLM_TYPE_12B:           return "12B";
-        case LLM_TYPE_13B:           return "13B";
-        case LLM_TYPE_14B:           return "14B";
-        case LLM_TYPE_15B:           return "15B";
-        case LLM_TYPE_16B:           return "16B";
-        case LLM_TYPE_20B:           return "20B";
-        case LLM_TYPE_26B:           return "26B";
-        case LLM_TYPE_27B:           return "27B";
-        case LLM_TYPE_30B:           return "30B";
-        case LLM_TYPE_32B:           return "32B";
-        case LLM_TYPE_34B:           return "34B";
-        case LLM_TYPE_35B:           return "35B";
-        case LLM_TYPE_36B:           return "36B";
-        case LLM_TYPE_40B:           return "40B";
-        case LLM_TYPE_65B:           return "65B";
-        case LLM_TYPE_70B:           return "70B";
-        case LLM_TYPE_120B:          return "120B";
-        case LLM_TYPE_142B:          return "142B";
-        case LLM_TYPE_236B:          return "236B";
-        case LLM_TYPE_290B:          return "290B";
-        case LLM_TYPE_314B:          return "314B";
-        case LLM_TYPE_405B:          return "405B";
-        case LLM_TYPE_671B:          return "671B";
-        case LLM_TYPE_SMALL:         return "0.1B";
-        case LLM_TYPE_MEDIUM:        return "0.4B";
-        case LLM_TYPE_LARGE:         return "0.8B";
-        case LLM_TYPE_XL:            return "1.5B";
-        case LLM_TYPE_A1_7B:         return "A1.7B";
-        case LLM_TYPE_A2_7B:         return "A2.7B";
-        case LLM_TYPE_8x7B:          return "8x7B";
-        case LLM_TYPE_8x22B:         return "8x22B";
-        case LLM_TYPE_16x12B:        return "16x12B";
-        case LLM_TYPE_16x3_8B:       return "16x3.8B";
-        case LLM_TYPE_10B_128x3_66B: return "10B+128x3.66B";
-        case LLM_TYPE_57B_A14B:      return "57B.A14B";
-        case LLM_TYPE_17B_16E:       return "17Bx16E (Scout)";
-        case LLM_TYPE_17B_128E:      return "17Bx128E (Maverick)";
-        case LLM_TYPE_A13B:          return "A13B";
-        case LLM_TYPE_7B_A1B:        return "7B.A1B";
-        case LLM_TYPE_8B_A1B:        return "8B.A1B";
-        case LLM_TYPE_16B_A1B:       return "16B.A1B";
-        case LLM_TYPE_21B_A3B:       return "21B.A3B";
-        case LLM_TYPE_30B_A3B:       return "30B.A3B";
-        case LLM_TYPE_31B_A3_5B:     return "31B.A3.5B";
-        case LLM_TYPE_80B_A3B:       return "80B.A3B";
-        case LLM_TYPE_100B_A6B:      return "100B.A6B";
-        case LLM_TYPE_102B_A12B:     return "102B.A12B";
-        case LLM_TYPE_106B_A12B:     return "106B.A12B";
-        case LLM_TYPE_230B_A10B:     return "230B.A10B";
-        case LLM_TYPE_235B_A22B:     return "235B.A22B";
-        case LLM_TYPE_300B_A47B:     return "300B.A47B";
-        case LLM_TYPE_310B_A15B:     return "310B.A15B";
-        case LLM_TYPE_355B_A32B:     return "355B.A32B";
-        case LLM_TYPE_E2B:           return "E2B";
-        case LLM_TYPE_E4B:           return "E4B";
-        default:                     return "?B";
+        case LLM_TYPE_3B:   return "3B";
+        case LLM_TYPE_8B:   return "8B";
+        case LLM_TYPE_14B:  return "14B";
+        case LLM_TYPE_123B: return "123B";
+        default:            return "?B";
     }
 }
 
@@ -579,6 +476,13 @@ void llama_model::load_hparams(llama_model_loader & ml) {
 
     // arch-specific KVs
     switch (arch) {
+        case LLM_ARCH_LLAMA:
+            {
+                ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
+
+                // Devstral-2-123B uses llama architecture
+                type = LLM_TYPE_123B;
+            } break;
         case LLM_ARCH_MISTRAL3:
             {
                 ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
@@ -913,6 +817,62 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
         // TODO: move to a separate function
         const auto tn = LLM_TN(arch);
         switch (arch) {
+            case LLM_ARCH_LLAMA:
+                {
+                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
+
+                    // output
+                    output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
+                    output      = create_tensor(tn(LLM_TENSOR_OUTPUT,      "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED);
+
+                    // if output is NULL, init from the input tok embed
+                    if (output == NULL) {
+                        output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED);
+                    }
+
+                    for (int i = 0; i < n_layer; ++i) {
+                        auto & layer = layers[i];
+
+                        layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
+
+                        layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd_head_k * n_head}, 0);
+                        layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_k_gqa}, 0);
+                        layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_v_gqa}, 0);
+                        layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k * n_head, n_embd}, 0);
+
+                        // optional bias tensors
+                        layer.bq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "bias", i), {n_embd},     TENSOR_NOT_REQUIRED);
+                        layer.bk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "bias", i), {n_embd_gqa}, TENSOR_NOT_REQUIRED);
+                        layer.bv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "bias", i), {n_embd_gqa}, TENSOR_NOT_REQUIRED);
+                        layer.bo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "bias", i), {n_embd},     TENSOR_NOT_REQUIRED);
+
+                        layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
+
+                        if (hparams.rope_scaling_type_train == LLAMA_ROPE_SCALING_TYPE_LONGROPE) {
+                            layer.rope_long  = create_tensor(tn(LLM_TENSOR_ROPE_FACTORS_LONG,  "weight", i), {n_rot/2}, TENSOR_NOT_REQUIRED | (i != 0 ? TENSOR_DUPLICATED : 0));
+                            layer.rope_short = create_tensor(tn(LLM_TENSOR_ROPE_FACTORS_SHORT, "weight", i), {n_rot/2}, TENSOR_NOT_REQUIRED | (i != 0 ? TENSOR_DUPLICATED : 0));
+                        }
+                        else {
+                            layer.rope_freqs = create_tensor(tn(LLM_TENSOR_ROPE_FREQS, "weight", i), {n_rot/2}, TENSOR_NOT_REQUIRED | (i != 0 ? TENSOR_DUPLICATED : 0));
+                        }
+
+                        if (n_expert == 0) {
+                            layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
+                            layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
+                            layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
+
+                            // optional MLP bias
+                            layer.ffn_gate_b = create_tensor(tn(LLM_TENSOR_FFN_GATE, "bias", i), {n_ff}, TENSOR_NOT_REQUIRED);
+                            layer.ffn_down_b = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "bias", i), {n_embd}, TENSOR_NOT_REQUIRED);
+                            layer.ffn_up_b   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "bias", i), {n_ff}, TENSOR_NOT_REQUIRED);
+                        } else {
+                            layer.ffn_gate_inp  = create_tensor(tn(LLM_TENSOR_FFN_GATE_INP,  "weight", i), {n_embd, n_expert}, 0);
+                            layer.ffn_gate_exps = create_tensor(tn(LLM_TENSOR_FFN_GATE_EXPS, "weight", i), {n_embd,   n_ff, n_expert}, TENSOR_NOT_REQUIRED);
+                            layer.ffn_down_exps = create_tensor(tn(LLM_TENSOR_FFN_DOWN_EXPS, "weight", i), {  n_ff, n_embd, n_expert}, 0);
+                            layer.ffn_up_exps   = create_tensor(tn(LLM_TENSOR_FFN_UP_EXPS,   "weight", i), {n_embd,   n_ff, n_expert}, 0);
+                        }
+                    }
+                } break;
             case LLM_ARCH_MISTRAL3:
                 {
                     tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
@@ -1432,6 +1392,10 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
     std::unique_ptr<llm_graph_context> llm;
 
     switch (arch) {
+        case LLM_ARCH_LLAMA:
+            {
+                llm = std::make_unique<llm_build_llama>(*this, params);
+            } break;
         case LLM_ARCH_MISTRAL3:
             {
                 llm = std::make_unique<llm_build_mistral3>(*this, params);
@@ -1554,6 +1518,7 @@ int32_t llama_n_head(const llama_model * model) {
 
 llama_rope_type llama_model_rope_type(const llama_model * model) {
     switch (model->arch) {
+        case LLM_ARCH_LLAMA:
         case LLM_ARCH_MISTRAL3:
             return LLAMA_ROPE_TYPE_NORM;
         case LLM_ARCH_UNKNOWN:
