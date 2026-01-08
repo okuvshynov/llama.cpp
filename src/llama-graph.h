@@ -21,8 +21,7 @@ struct llama_memory_context_i;
 
 class llama_kv_cache_context;
 class llama_kv_cache_iswa_context;
-class llama_memory_recurrent_context;
-class llama_memory_hybrid_context;
+// NOTE: llama_memory_recurrent_context and llama_memory_hybrid_context removed for minimal build
 
 // certain models (typically multi-modal) can produce different types of graphs
 enum llm_graph_type {
@@ -218,28 +217,7 @@ public:
     const llm_arch arch;
 };
 
-class llm_graph_input_rs : public llm_graph_input_i {
-public:
-    llm_graph_input_rs(const llama_memory_recurrent_context * mctx) : mctx(mctx) {}
-    virtual ~llm_graph_input_rs() = default;
-
-    void set_input(const llama_ubatch * ubatch) override;
-
-    bool can_reuse(const llm_graph_params & params) override;
-
-    ggml_tensor * s_copy;  // I32 [n_rs]
-
-    // views of s_copy, computed once per graph
-    // and shared across layers which use build_rs
-    ggml_tensor * s_copy_main;   // I32 [n_seqs]
-    ggml_tensor * s_copy_extra;  // I32 [n_rs - n_seqs]
-
-    const llama_memory_recurrent_context * mctx;
-
-    // used in view offsets, need to match for valid graph reuse
-    uint32_t head;
-    int32_t rs_z;
-};
+// NOTE: llm_graph_input_rs class removed for minimal build (recurrent/SSM models not supported)
 
 class llm_graph_input_cross_embd : public llm_graph_input_i {
 public:
@@ -368,33 +346,7 @@ public:
     const llama_cross * cross = nullptr;
 };
 
-class llm_graph_input_mem_hybrid : public llm_graph_input_i {
-public:
-    llm_graph_input_mem_hybrid(
-            const llama_cparams & cparams,
-            std::unique_ptr<llm_graph_input_attn_kv> inp_attn,
-            std::unique_ptr<llm_graph_input_rs>      inp_rs,
-            const llama_memory_hybrid_context *      mctx) :
-        inp_attn(std::move(inp_attn)),
-        inp_rs(std::move(inp_rs)),
-        cparams(cparams),
-        mctx(mctx) { }
-    virtual ~llm_graph_input_mem_hybrid() = default;
-
-    void set_input(const llama_ubatch * ubatch) override;
-
-    bool can_reuse(const llm_graph_params & params) override;
-
-    std::unique_ptr<llm_graph_input_attn_kv> inp_attn;
-    std::unique_ptr<llm_graph_input_rs>      inp_rs;
-
-    llm_graph_input_attn_kv * get_attn() const { return inp_attn.get(); }
-    llm_graph_input_rs      * get_recr() const { return inp_rs.get(); }
-
-    const llama_cparams cparams;
-
-    const llama_memory_hybrid_context * mctx;
-};
+// NOTE: llm_graph_input_mem_hybrid class removed for minimal build (hybrid models not supported)
 
 //
 // llm_graph_result
@@ -544,8 +496,7 @@ using llm_graph_result_ptr = std::unique_ptr<llm_graph_result>;
 // llm_graph_context
 //
 
-// used in build_rs to properly order writes and avoid unnecessary copies
-using llm_graph_get_rows_fn = std::function<ggml_tensor * (ggml_context *, ggml_tensor * states, ggml_tensor * ids)>;
+// NOTE: llm_graph_get_rows_fn removed for minimal build (recurrent models not supported)
 
 struct llm_graph_context {
     const llm_arch arch;
@@ -777,50 +728,7 @@ struct llm_graph_context {
                   float   kq_scale,
                     int   il) const;
 
-    //
-    // recurrent
-    //
-
-    // TODO: move this implementation to llama_memory_recurrent.
-    //       this is analogous to llama_kv_cache::cpy_k / cpy_v
-    //       when moving, avoid passing `ggml_cgraph` - only pass `ggml_context`. would likely need to split the
-    //         implementation in 2 separate methods. the goal is to avoid calling `ggml_build_forward_expand` in
-    //         `llama_memory_recurrent`
-    ggml_tensor * build_rs(
-            ggml_tensor * s,
-            ggml_tensor * state_copy_main,
-            ggml_tensor * state_copy_extra,
-                int32_t   state_size,
-                int32_t   n_seqs,
-               uint32_t   n_rs,
-               uint32_t   rs_head,
-               uint32_t   rs_size,
-                int32_t   rs_zero,
-            const llm_graph_get_rows_fn & get_state_rows = ggml_get_rows) const;
-
-    llm_graph_input_rs * build_rs_inp() const;
-
-    ggml_tensor * build_rs(
-            llm_graph_input_rs * inp,
-            ggml_tensor * s,
-                int32_t   state_size,
-                int32_t   n_seqs,
-            const llm_graph_get_rows_fn & get_state_rows = ggml_get_rows) const;
-
-    ggml_tensor * build_rwkv_token_shift_load(
-        llm_graph_input_rs * inp,
-        const llama_ubatch & ubatch,
-                       int   il) const;
-
-    ggml_tensor * build_rwkv_token_shift_store(
-             ggml_tensor * token_shift,
-      const llama_ubatch & ubatch,
-                     int   il) const;
-    //
-    // hybrid
-    //
-
-    llm_graph_input_mem_hybrid * build_inp_mem_hybrid() const;
+    // NOTE: recurrent and hybrid sections removed for minimal build (MISTRAL3 only)
 
     //
     // pooling

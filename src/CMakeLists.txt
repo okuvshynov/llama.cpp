@@ -23,8 +23,7 @@ add_library(llama
             llama-kv-cache.cpp
             llama-kv-cache-iswa.cpp
             llama-memory.cpp
-            llama-memory-hybrid.cpp
-            llama-memory-recurrent.cpp
+            # NOTE: llama-memory-hybrid.cpp and llama-memory-recurrent.cpp removed for minimal build
             llama-mmap.cpp
             llama-model-loader.cpp
             llama-model-saver.cpp

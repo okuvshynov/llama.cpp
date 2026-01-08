@@ -13,10 +13,12 @@ Goal: Reduce complexity to a "single file implementation" feel while maintaining
 | 2 | Remove non-ARM CPU backends and tests | ~86K LoC |
 | 3 | Remove unused architecture definitions | ~8.5K LoC |
 | 4 | Remove mtmd multimodal support | ~12.9K LoC |
+| 5 | Remove recurrent/hybrid memory (SSM/RWKV support) | ~1.8K LoC |
 
 ### Next Phases
 
-- **Phase 5**: Clean up remaining dead code in llama-model.cpp (~500 LoC)
+- **Phase 6**: Remove unused layer struct members in llama_layer (llama-model.h)
+- **Phase 7**: Simplify llm_type enum to only MISTRAL3-used types
 
 ## Testing
 
