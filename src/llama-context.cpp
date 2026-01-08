@@ -87,13 +87,7 @@ llama_context::llama_context(
                   float mscale          = 1.0f;
             const float mscale_all_dims = hparams.rope_yarn_log_mul;
 
-            // [TAG_DEEPSEEK2_YARN_LOG_MUL_FIX]
-            // special-case DEEPSEEK v2:
-            // https://huggingface.co/deepseek-ai/DeepSeek-V2-Lite-Chat/blob/main/config.json#L42-L43
-            if (model.arch == LLM_ARCH_DEEPSEEK2 && mscale_all_dims != 1.0f) {
-                mscale = mscale_all_dims;
-            }
-
+            // NOTE: DEEPSEEK2 special case removed for minimal build
             cparams.yarn_attn_factor = get_mscale(factor, mscale) / get_mscale(factor, mscale_all_dims);
 
             LLAMA_LOG_WARN("%s: setting new yarn_attn_factor = %.4f (mscale == %.1f, mscale_all_dim = %.1f)\n",
@@ -1002,31 +996,7 @@ int llama_context::encode(const llama_batch & batch_inp) {
         }
     }
 
-    // TODO: hacky solution
-    if (model.arch == LLM_ARCH_T5 && t_embd) {
-        //cross.t_embd = t_embd;
-
-        synchronize();
-
-        cross.n_embd = t_embd->ne[0];
-        cross.n_enc  = t_embd->ne[1];
-        cross.v_embd.resize(cross.n_embd*cross.n_enc);
-        memcpy(cross.v_embd.data(), embd, ggml_nbytes(t_embd));
-
-        const auto & batch = balloc->get_batch();
-
-        // remember the sequence ids used during the encoding - needed for cross attention later
-        cross.seq_ids_enc.resize(n_tokens);
-        for (uint32_t i = 0; i < n_tokens; i++) {
-            cross.seq_ids_enc[i].clear();
-
-            for (int s = 0; s < batch.n_seq_id[i]; s++) {
-                const llama_seq_id seq_id = batch.seq_id[i][s];
-
-                cross.seq_ids_enc[i].insert(seq_id);
-            }
-        }
-    }
+    // NOTE: T5 specific cross-attention logic removed for minimal build
 
     return 0;
 }
@@ -1352,11 +1322,7 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
     bool has_logits = true;
     bool has_embd   = cparams.embeddings;
 
-    // TODO: hacky enc-dec support
-    if (model.arch == LLM_ARCH_T5) {
-        has_logits = true;
-        has_embd   = true;
-    }
+    // NOTE: T5 specific enc-dec support removed for minimal build
 
     logits_size = has_logits ? n_vocab*n_outputs_max : 0;
     embd_size   = has_embd   ?  n_embd*n_outputs_max : 0;
@@ -1439,9 +1405,8 @@ void llama_context::output_reorder() {
 //
 
 uint32_t llama_context::graph_max_nodes(uint32_t n_tokens) const {
-    if (model.arch == LLM_ARCH_QWEN3NEXT) {
-        return std::max<uint32_t>(n_tokens * 40, 32u * model.n_tensors());
-    }
+    GGML_UNUSED(n_tokens);
+    // NOTE: QWEN3NEXT specific logic removed for minimal build
     uint32_t res = std::max<uint32_t>(1024u, 8u*model.n_tensors());
     res += model.n_lora_nodes;
     return res;
@@ -2417,10 +2382,7 @@ llama_context * llama_init_from_model(
         return nullptr;
     }
 
-    if (params.flash_attn_type != LLAMA_FLASH_ATTN_TYPE_DISABLED && model->arch == LLM_ARCH_GROK) {
-        LLAMA_LOG_WARN("%s: flash_attn is not compatible with Grok - forcing off\n", __func__);
-        params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
-    }
+    // NOTE: GROK flash_attn check removed for minimal build
 
     if (params.flash_attn_type == LLAMA_FLASH_ATTN_TYPE_AUTO && ggml_is_quantized(params.type_k)) {
         const uint32_t blck_size = ggml_blck_size(params.type_k);
