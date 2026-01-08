@@ -21,6 +21,22 @@ Goal: Reduce complexity to a "single file implementation" feel while maintaining
 | 5 | Remove recurrent/hybrid memory (SSM/RWKV support) | ~1.8K LoC |
 | 6 | Simplify llama_layer struct (Devstral-only members) | ~0.4K LoC |
 | 7 | Simplify llm_type enum (Devstral-only types) | ~0.1K LoC |
+| 8 | Remove supplemental directories and files | ~437K LoC |
+
+**Total: ~761K lines removed**
+
+### Current Directory Structure
+
+```
+.
+├── cmake/           (28K - build helpers)
+├── common/          (968K - common utilities)
+├── ggml/            (3.2M - GGML core + Metal/ARM backends)
+├── include/         (80K - public headers)
+├── src/             (1.4M - llama implementation)
+├── tools/           (1.9M - CLI + server)
+└── vendor/          (1.5M - httplib, minja, nlohmann, sheredom)
+```
 
 ### Potential Future Phases
 
