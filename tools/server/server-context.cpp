@@ -10,8 +10,6 @@
 #include "log.h"
 #include "sampling.h"
 #include "speculative.h"
-#include "mtmd.h"
-#include "mtmd-helper.h"
 
 #include <cstddef>
 #include <cinttypes>
@@ -75,9 +73,6 @@ struct server_slot {
     // TODO: change to unique_ptrs for consistency:
     llama_context * ctx = nullptr;
     llama_context * ctx_dft = nullptr;
-
-    // multimodal
-    mtmd_context * mctx = nullptr;
 
     common_speculative * spec = nullptr;
 
@@ -514,7 +509,6 @@ public:
     //  - when not in sleeping state
     //  - and, with thread-safe APIs (e.g., tokenizer calls)
     llama_model * model = nullptr;
-    mtmd_context * mctx = nullptr;
     const llama_vocab * vocab = nullptr;
 
     server_queue    queue_tasks;
@@ -577,9 +571,6 @@ private:
         llama_init.reset();
         ctx = nullptr;
         model = nullptr;
-
-        mtmd_free(mctx);
-        mctx = nullptr;
 
         // Clear any sampling context
         for (server_slot & slot : slots) {
@@ -683,43 +674,6 @@ private:
             chat_templates = common_chat_templates_init(model, "chatml");
         }
 
-        std::string & mmproj_path = params_base.mmproj.path;
-        if (!mmproj_path.empty()) {
-            if (!is_resume) {
-                mtmd_helper_log_set(common_log_default_callback, nullptr);
-            }
-
-            mtmd_context_params mparams = mtmd_context_params_default();
-            mparams.use_gpu          = params_base.mmproj_use_gpu;
-            mparams.print_timings    = false;
-            mparams.n_threads        = params_base.cpuparams.n_threads;
-            mparams.flash_attn_type  = params_base.flash_attn_type;
-            mparams.warmup           = params_base.warmup;
-            mparams.image_min_tokens = params_base.image_min_tokens;
-            mparams.image_max_tokens = params_base.image_max_tokens;
-            mctx = mtmd_init_from_file(mmproj_path.c_str(), model, mparams);
-            if (mctx == nullptr) {
-                SRV_ERR("failed to load multimodal model, '%s'\n", mmproj_path.c_str());
-                return false;
-            }
-            SRV_INF("loaded multimodal model, '%s'\n", mmproj_path.c_str());
-
-            if (params_base.ctx_shift) {
-                params_base.ctx_shift = false;
-                SRV_WRN("%s\n", "ctx_shift is not supported by multimodal, it will be disabled");
-            }
-
-            if (params_base.n_cache_reuse) {
-                params_base.n_cache_reuse = 0;
-                SRV_WRN("%s\n", "cache_reuse is not supported by multimodal, it will be disabled");
-            }
-
-            if (params_base.has_speculative()) {
-                SRV_ERR("%s\n", "err: speculative decode is not supported by multimodal");
-                return false;
-            }
-        }
-
         if (!llama_memory_can_shift(llama_get_memory(ctx))) {
             if (params_base.ctx_shift) {
                 params_base.ctx_shift = false;
@@ -753,8 +707,6 @@ private:
             slot.id = i;
             slot.ctx = ctx;
             slot.n_ctx = n_ctx_slot;
-            slot.mctx = mctx;
-            slot.prompt.tokens.has_mtmd = mctx != nullptr;
 
             if (model_dft) {
                 slot.batch_spec = llama_batch_init(params_base.speculative.n_max + 1, 0, 1);
@@ -841,10 +793,7 @@ private:
             /* reasoning_format      */ params_base.reasoning_format,
             /* chat_template_kwargs  */ params_base.default_template_kwargs,
             /* common_chat_templates */ chat_templates.get(),
-            /* allow_image           */ mctx ? mtmd_support_vision(mctx) : false,
-            /* allow_audio           */ mctx ? mtmd_support_audio (mctx) : false,
             /* enable_thinking       */ enable_thinking,
-            /* media_path            */ params_base.media_path,
         };
 
         // print sample chat example to make it clear which template is used
@@ -983,9 +932,6 @@ private:
 
             // don't update the cache if the slot's context is empty
             update_cache = update_cache && tokens.size() > 0;
-
-            // TODO: mtmd does not support prompt cache
-            update_cache = update_cache && (ret->mctx == nullptr);
 
             if (update_cache) {
                 SRV_WRN("%s", "updating prompt cache\n");
@@ -1375,15 +1321,6 @@ private:
         queue_results.send(std::move(res));
     }
 
-    // if multimodal is enabled, send an error and return false
-    bool check_no_mtmd(const int id_task) {
-        if (mctx) {
-            send_error(id_task, "This feature is not supported by multimodal", ERROR_TYPE_NOT_SUPPORTED);
-            return false;
-        }
-        return true;
-    }
-
     void send_partial_response(server_slot & slot, const completion_token_output & tkn, bool is_progress) {
         auto res = std::make_unique<server_task_result_cmpl_partial>();
 
@@ -1583,13 +1520,8 @@ private:
 
             // tokenize the resulting prompt
             auto & prompt = chat_params.prompt;
-            if (mctx != nullptr) {
-                task.tokens = process_mtmd_prompt(mctx, prompt, task.cli_files);
-            } else {
-                task.tokens = std::move(tokenize_input_prompts(vocab, mctx, prompt, true, true)[0]);
-            }
+            task.tokens = std::move(tokenize_input_prompts(vocab, prompt, true, true)[0]);
             task.cli_input.clear();
-            task.cli_files.clear();
         } catch (const std::exception & e) {
             send_error(task, std::string("Failed to format input: ") + e.what(), ERROR_TYPE_INVALID_REQUEST);
             return false;
@@ -1695,10 +1627,6 @@ private:
                 } break;
             case SERVER_TASK_TYPE_SLOT_SAVE:
                 {
-                    if (!check_no_mtmd(task.id)) {
-                        break;
-                    }
-
                     int id_slot = task.slot_action.slot_id;
                     server_slot * slot = get_slot_by_id(id_slot);
                     if (slot == nullptr) {
@@ -1736,7 +1664,6 @@ private:
                 } break;
             case SERVER_TASK_TYPE_SLOT_RESTORE:
                 {
-                    if (!check_no_mtmd(task.id)) break;
                     int id_slot = task.slot_action.slot_id;
                     server_slot * slot = get_slot_by_id(id_slot);
                     if (slot == nullptr) {
@@ -1783,9 +1710,6 @@ private:
                 } break;
             case SERVER_TASK_TYPE_SLOT_ERASE:
                 {
-                    if (!check_no_mtmd(task.id)) {
-                        break;
-                    }
                     int id_slot = task.slot_action.slot_id;
                     server_slot * slot = get_slot_by_id(id_slot);
                     if (slot == nullptr) {
@@ -1891,12 +1815,6 @@ private:
                     continue;
                 }
 
-                if (mctx) {
-                    // we should never reach this because params_base.ctx_shift is automatically disabled if mmproj is loaded
-                    // we don't support ctx_shift because an image chunk may contains multiple tokens
-                    GGML_ABORT("not supported by multimodal");
-                }
-
                 if (slot.is_parent() || slot.is_child()) {
                     send_error(slot, "context shift cannot be used for shared prompt", ERROR_TYPE_SERVER);
                     slot.release();
@@ -1923,8 +1841,6 @@ private:
                 // add generated tokens to cache
                 // ref: https://github.com/ggml-org/llama.cpp/pull/16818#discussion_r2473269481
                 {
-                    GGML_ASSERT(!slot.prompt.tokens.has_mtmd);
-
                     llama_tokens new_tokens = slot.prompt.tokens.get_text_tokens(); // copy
                     for (size_t i = n_keep + n_discard; i < new_tokens.size(); i++) {
                         new_tokens[i - n_discard] = new_tokens[i];
@@ -1969,11 +1885,6 @@ private:
             //       perform the speculative drafting for all sequences at the same time in a single batch
             int n_draft_max = slot.get_n_draft_max();
             if (n_draft_max > 0) {
-                if (mctx) {
-                    // we should never reach this, as speculative is automatically disabled if mmproj is loaded
-                    GGML_ABORT("not supported by multimodal");
-                }
-
                 struct common_speculative_params params_spec;
                 params_spec.n_draft = n_draft_max;
                 params_spec.n_reuse = llama_n_ctx(slot.ctx_dft) - slot.task->params.speculative.n_max;
@@ -2129,9 +2040,7 @@ private:
 
                                 const auto n_cache_reuse = slot.task->params.n_cache_reuse;
 
-                                const bool can_cache_reuse =
-                                    llama_memory_can_shift(llama_get_memory(ctx)) &&
-                                    !slot.prompt.tokens.has_mtmd;
+                                const bool can_cache_reuse = llama_memory_can_shift(llama_get_memory(ctx));
 
                                 if (!can_cache_reuse && n_cache_reuse > 0) {
                                     SLT_WRN(slot, "cache reuse is not supported - ignoring n_cache_reuse = %d\n", n_cache_reuse);
@@ -2139,15 +2048,8 @@ private:
 
                                 // reuse chunks from the cached prompt by shifting their KV cache in the new position
                                 if (can_cache_reuse && n_cache_reuse > 0) {
-                                    GGML_ASSERT(!slot.prompt.tokens.has_mtmd);
-
                                     size_t head_c = n_past; // cache
                                     size_t head_p = n_past; // current prompt
-
-                                    if (mctx) {
-                                        // we should never reach this
-                                        GGML_ABORT("not supported by multimodal");
-                                    }
 
                                     SLT_DBG(slot, "trying to reuse chunks with size > %d, n_past = %d\n", n_cache_reuse, n_past);
 
@@ -2197,9 +2099,7 @@ private:
                             // the largest pos_min required for a checkpoint to be useful
                             const auto pos_min_thold = std::max(0, n_past - n_swa);
 
-                            // note: disallow with mtmd contexts for now
-                            //       https://github.com/ggml-org/llama.cpp/issues/17043
-                            if (!mctx && n_past > 0 && n_past < slot.prompt.n_tokens()) {
+                            if (n_past > 0 && n_past < slot.prompt.n_tokens()) {
                                 const auto pos_min = llama_memory_seq_pos_min(llama_get_memory(ctx), slot.id);
                                 if (pos_min == -1) {
                                     SLT_ERR(slot, "n_past = %d, slot.prompt.tokens.size() = %d, seq_id = %d, pos_min = %d\n", n_past, (int) slot.prompt.tokens.size(), slot.id, pos_min);
@@ -2229,14 +2129,14 @@ private:
 
                                         {
                                             const auto token = slot.prompt.tokens[i];
-                                            const auto piece = token != LLAMA_TOKEN_NULL ? common_token_to_piece(ctx, token) : "[mtmd]";
+                                            const auto piece = common_token_to_piece(ctx, token);
                                             ss0 << piece;
                                             st0 << std::setw(8) << token;
                                         }
 
                                         {
                                             const auto token = slot.task->tokens[i];
-                                            const auto piece = token != LLAMA_TOKEN_NULL ? common_token_to_piece(ctx, token) : "[mtmd]";
+                                            const auto piece = common_token_to_piece(ctx, token);
                                             ss1 << piece;
                                             st1 << std::setw(8) << token;
                                         }
@@ -2250,9 +2150,6 @@ private:
                                 }
 
                                 if (pos_min > pos_min_thold) {
-                                    // TODO: support can be added in the future when corresponding vision models get released
-                                    GGML_ASSERT(!slot.prompt.tokens.has_mtmd);
-
                                     SLT_WRN(slot, "n_past = %d, slot.prompt.tokens.size() = %d, seq_id = %d, pos_min = %d, n_swa = %d\n", n_past, (int) slot.prompt.tokens.size(), slot.id, pos_min, n_swa);
 
                                     // search for a context checkpoint
@@ -2342,27 +2239,6 @@ private:
 
                         // there is no common part left
                         slot.n_prompt_tokens_cache = 0;
-                    }
-
-                    // check if we should process the image
-                    if (slot.prompt.n_tokens() < slot.task->n_tokens() && input_tokens[slot.prompt.n_tokens()] == LLAMA_TOKEN_NULL) {
-                        // process the image
-                        size_t n_tokens_out = 0;
-                        int32_t res = input_tokens.process_chunk(ctx, mctx, slot.prompt.n_tokens(), slot.prompt.tokens.pos_next(), slot.id, n_tokens_out);
-                        if (res != 0) {
-                            SLT_ERR(slot, "failed to process image, res = %d\n", res);
-                            send_error(slot, "failed to process image", ERROR_TYPE_SERVER);
-                            slot.release();
-                            continue;
-                        }
-
-                        slot.n_prompt_tokens_processed += n_tokens_out;
-
-                        // add the image chunk to cache
-                        {
-                            const auto & chunk = input_tokens.find_chunk(slot.prompt.n_tokens());
-                            slot.prompt.tokens.push_back(chunk.get()); // copy
-                        }
                     }
 
                     // If using an alora, there may be uncached tokens that come
@@ -2802,9 +2678,6 @@ server_context_meta server_context::get_meta() const {
         /* build_info             */ build_info,
         /* model_name             */ impl->model_name,
         /* model_path             */ impl->params_base.model.path,
-        /* has_mtmd               */ impl->mctx != nullptr,
-        /* has_inp_image          */ impl->oai_parser_opt.allow_image,
-        /* has_inp_audio          */ impl->oai_parser_opt.allow_audio,
         /* json_webui_settings    */ impl->json_webui_settings,
         /* slot_n_ctx             */ impl->get_slot_n_ctx(),
         /* pooling_type           */ llama_pooling_type(impl->ctx),
@@ -2861,7 +2734,6 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
             const server_http_req & req,
             server_task_type type,
             const json & data,
-            const std::vector<raw_buffer> & files,
             task_response_type res_type) {
     GGML_ASSERT(type == SERVER_TASK_TYPE_COMPLETION || type == SERVER_TASK_TYPE_INFILL);
 
@@ -2879,13 +2751,7 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
         // process prompt
         std::vector<server_tokens> inputs;
 
-        if (res_type != TASK_RESPONSE_TYPE_NONE && ctx_server.mctx != nullptr) {
-            // This is the case used by OAI compatible chat path with MTMD. TODO It can be moved to the path below.
-            inputs.push_back(process_mtmd_prompt(ctx_server.mctx, prompt.get<std::string>(), files));
-        } else {
-            // Everything else, including multimodal completions.
-            inputs = tokenize_input_prompts(ctx_server.vocab, ctx_server.mctx, prompt, true, true);
-        }
+        inputs = tokenize_input_prompts(ctx_server.vocab, prompt, true, true);
         tasks.reserve(inputs.size());
         for (size_t i = 0; i < inputs.size(); i++) {
             server_task task = server_task(type);
@@ -3299,8 +3165,8 @@ void server_routes::init_routes() {
             { "model_alias",                 meta->model_name },
             { "model_path",                  meta->model_path },
             { "modalities",                  json {
-                {"vision", meta->has_inp_image},
-                {"audio",  meta->has_inp_audio},
+                {"vision", false},
+                {"audio",  false},
             } },
             { "endpoint_slots",              params.endpoint_slots },
             { "endpoint_props",              params.endpoint_props },
@@ -3354,7 +3220,7 @@ void server_routes::init_routes() {
                 {"quantization_level", ""}
             }},
             {"model_info", ""},
-            {"capabilities", meta->has_mtmd ? json({"completion","multimodal"}) : json({"completion"})}
+            {"capabilities", json({"completion"})}
         };
 
         res->ok(data);
@@ -3416,7 +3282,7 @@ void server_routes::init_routes() {
         data["input_extra"] = input_extra; // default to empty array if it's not exist
 
         std::string prompt = json_value(data, "prompt", std::string());
-        std::vector<server_tokens> tokenized_prompts = tokenize_input_prompts(ctx_server.vocab, ctx_server.mctx, prompt, false, true);
+        std::vector<server_tokens> tokenized_prompts = tokenize_input_prompts(ctx_server.vocab, prompt, false, true);
         SRV_DBG("creating infill tasks, n_prompts = %d\n", (int) tokenized_prompts.size());
         data["prompt"] = format_prompt_infill(
             ctx_server.vocab,
@@ -3430,79 +3296,61 @@ void server_routes::init_routes() {
             tokenized_prompts[0].get_text_tokens() // TODO: this could maybe be multimodal.
         );
 
-        std::vector<raw_buffer> files; // dummy
         return handle_completions_impl(
             req,
             SERVER_TASK_TYPE_INFILL,
             data,
-            files,
             TASK_RESPONSE_TYPE_NONE); // infill is not OAI compatible
     };
 
     this->post_completions = [this](const server_http_req & req) {
-        auto res = create_response();
-        std::vector<raw_buffer> files; // dummy
         const json body = json::parse(req.body);
         return handle_completions_impl(
             req,
             SERVER_TASK_TYPE_COMPLETION,
             body,
-            files,
             TASK_RESPONSE_TYPE_NONE);
     };
 
     this->post_completions_oai = [this](const server_http_req & req) {
-        auto res = create_response();
-        std::vector<raw_buffer> files; // dummy
         const json body = json::parse(req.body);
         return handle_completions_impl(
             req,
             SERVER_TASK_TYPE_COMPLETION,
             body,
-            files,
             TASK_RESPONSE_TYPE_OAI_CMPL);
     };
 
     this->post_chat_completions = [this](const server_http_req & req) {
-        auto res = create_response();
-        std::vector<raw_buffer> files;
         json body = json::parse(req.body);
         json body_parsed = oaicompat_chat_params_parse(
             body,
-            ctx_server.oai_parser_opt,
-            files);
+            ctx_server.oai_parser_opt);
         return handle_completions_impl(
             req,
             SERVER_TASK_TYPE_COMPLETION,
             body_parsed,
-            files,
             TASK_RESPONSE_TYPE_OAI_CHAT);
     };
 
     this->post_anthropic_messages = [this](const server_http_req & req) {
-        auto res = create_response();
-        std::vector<raw_buffer> files;
         json body = convert_anthropic_to_oai(json::parse(req.body));
         json body_parsed = oaicompat_chat_params_parse(
             body,
-            ctx_server.oai_parser_opt,
-            files);
+            ctx_server.oai_parser_opt);
         return handle_completions_impl(
             req,
             SERVER_TASK_TYPE_COMPLETION,
             body_parsed,
-            files,
             TASK_RESPONSE_TYPE_ANTHROPIC);
     };
 
     this->post_anthropic_count_tokens = [this](const server_http_req & req) {
         auto res = create_response();
-        std::vector<raw_buffer> files;
         json body = convert_anthropic_to_oai(json::parse(req.body));
         json body_parsed = oaicompat_chat_params_parse(
             body,
-            ctx_server.oai_parser_opt,
-            files);
+            ctx_server.oai_parser_opt);
 
         json prompt = body_parsed.at("prompt");
         llama_tokens tokens = tokenize_mixed(ctx_server.vocab, prompt, true, true);
@@ -3513,12 +3361,10 @@ void server_routes::init_routes() {
     // same with handle_chat_completions, but without inference part
     this->post_apply_template = [this](const server_http_req & req) {
         auto res = create_response();
-        std::vector<raw_buffer> files; // dummy, unused
         json body = json::parse(req.body);
         json data = oaicompat_chat_params_parse(
             body,
-            ctx_server.oai_parser_opt,
-            files);
+            ctx_server.oai_parser_opt);
         res->ok({{ "prompt", std::move(data.at("prompt")) }});
         return res;
     };
@@ -3542,7 +3388,7 @@ void server_routes::init_routes() {
                     {"type", "model"},
                     {"description", ""},
                     {"tags", {""}},
-                    {"capabilities", meta->has_mtmd ? json({"completion","multimodal"}) : json({"completion"})},
+                    {"capabilities", json({"completion"})},
                     {"parameters", ""},
                     {"details", {
                         {"parent_model", ""},
@@ -3682,7 +3528,7 @@ void server_routes::init_routes() {
             std::vector<server_task> tasks;
             tasks.reserve(documents.size());
             for (size_t i = 0; i < documents.size(); i++) {
-                auto tmp = format_prompt_rerank(ctx_server.model, ctx_server.vocab, ctx_server.mctx, query, documents[i]);
+                auto tmp = format_prompt_rerank(ctx_server.model, ctx_server.vocab, query, documents[i]);
                 server_task task = server_task(SERVER_TASK_TYPE_RERANK);
                 task.id     = rd.get_new_id();
                 task.tokens = std::move(tmp);
@@ -3920,7 +3766,7 @@ std::unique_ptr<server_res_generator> server_routes::handle_embeddings_impl(cons
         }
     }
 
-    auto tokenized_prompts = tokenize_input_prompts(ctx_server.vocab, ctx_server.mctx, prompt, true, true);
+    auto tokenized_prompts = tokenize_input_prompts(ctx_server.vocab, prompt, true, true);
     for (const auto & tokens : tokenized_prompts) {
         // this check is necessary for models that do not add BOS token to the input
         if (tokens.empty()) {

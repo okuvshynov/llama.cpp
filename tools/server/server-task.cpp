@@ -1421,7 +1421,7 @@ server_prompt * server_prompt_cache::alloc(const server_prompt & prompt, size_t 
     // TODO: for some reason we can't copy server_tokens, so we have to do this workaround
     auto & cur = states.emplace_back();
     cur = {
-        /*.tokens      =*/ server_tokens(prompt.tokens.get_text_tokens(), false),
+        /*.tokens      =*/ server_tokens(prompt.tokens.get_text_tokens()),
         /*.data        =*/ std::move(state_data),
         /*.checkpoints =*/ prompt.checkpoints,
     };

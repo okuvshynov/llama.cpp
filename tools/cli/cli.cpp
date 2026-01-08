@@ -142,19 +142,16 @@ struct cli_context {
 
     // TODO: support remote files in the future (http, https, etc)
     std::string load_input_file(const std::string & fname, bool is_media) {
+        if (is_media) {
+            // multimodal not supported in this build
+            return "";
+        }
         std::ifstream file(fname, std::ios::binary);
         if (!file) {
             return "";
         }
-        if (is_media) {
-            raw_buffer buf;
-            buf.assign((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-            input_files.push_back(std::move(buf));
-            return mtmd_default_marker();
-        } else {
-            std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-            return content;
-        }
+        std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        return content;
     }
 };
 
@@ -218,12 +215,6 @@ int main(int argc, char ** argv) {
 
     auto inf = ctx_cli.ctx_server.get_meta();
     std::string modalities = "text";
-    if (inf.has_inp_image) {
-        modalities += ", vision";
-    }
-    if (inf.has_inp_audio) {
-        modalities += ", audio";
-    }
 
     if (!params.system_prompt.empty()) {
         ctx_cli.messages.push_back({
@@ -246,12 +237,6 @@ int main(int argc, char ** argv) {
     console::log("  /regen              regenerate the last response\n");
     console::log("  /clear              clear the chat history\n");
     console::log("  /read               add a text file\n");
-    if (inf.has_inp_image) {
-        console::log("  /image <file>       add an image file\n");
-    }
-    if (inf.has_inp_audio) {
-        console::log("  /audio <file>       add an audio file\n");
-    }
     console::log("\n");
 
     // interactive loop
@@ -323,18 +308,8 @@ int main(int argc, char ** argv) {
             ctx_cli.input_files.clear();
             console::log("Chat history cleared.\n");
             continue;
-        } else if (
-                (string_starts_with(buffer, "/image ") && inf.has_inp_image) ||
-                (string_starts_with(buffer, "/audio ") && inf.has_inp_audio)) {
-            // just in case (bad copy-paste for example), we strip all trailing/leading spaces
-            std::string fname = string_strip(buffer.substr(7));
-            std::string marker = ctx_cli.load_input_file(fname, true);
-            if (marker.empty()) {
-                console::error("file does not exist or cannot be opened: '%s'\n", fname.c_str());
-                continue;
-            }
-            cur_msg += marker;
-            console::log("Loaded media from '%s'\n", fname.c_str());
+        } else if (string_starts_with(buffer, "/image ") || string_starts_with(buffer, "/audio ")) {
+            console::error("multimodal (image/audio) is not supported in this build\n");
             continue;
         } else if (string_starts_with(buffer, "/read ")) {
             std::string fname = string_strip(buffer.substr(6));

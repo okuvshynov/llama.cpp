@@ -4,7 +4,6 @@
 #include "log.h"
 #include "llama.h"
 #include "chat.h"
-#include "mtmd.h"
 
 #define JSON_ASSERT GGML_ASSERT
 #include <nlohmann/json.hpp>
@@ -121,41 +120,22 @@ std::vector<size_t> lora_get_enabled_ids(const std::vector<common_adapter_lora_i
 //
 
 /**
- * server_tokens is a helper to manage the input tokens and image for the server.
- * it is made this way to simplify the logic of KV cache management.
+ * server_tokens is a helper to manage the input tokens for the server.
+ * Simplified for text-only inference (no multimodal support).
  */
 struct server_tokens {
-    bool has_mtmd = false;
-
-private: // disallow accessing these members directly, risking out-of-sync
-
-    // map a **start** index in tokens to the image chunk
-    // note: the order need to be in-sync with tokens
-    std::map<size_t, mtmd::input_chunk_ptr> map_idx_to_media;
-
-    // list of tokens
-    //   if the token is LLAMA_TOKEN_NULL, it indicates that this position is occupied by media chunk
-    //   otherwise, it is a normal text token
-    // note: a non-text chunk can occupy multiple tokens (aka memory cells) in the token list
-    // note(2): for M-RoPE, an image can occupy different number of pos; do not assume 1-to-1 mapping tokens <-> pos
+private:
     llama_tokens tokens;
-
-    // for ex. with input of 5 text tokens and 2 images (each image occupies 3 tokens and 2 pos):
-    //      [0] [1] [2] [3] [4] [img0] [img0] [img0] [img1] [img1] [img1]
-    // idx  0   1   2   3   4   5      6      7      8      9      10
-    // pos  0   1   2   3   4   5      5      5      7      7      7
-    // map_idx_to_media will contain: {5, img0}, {8, img1}
 
 public:
     server_tokens() = default;
     ~server_tokens() = default;
 
     // Prevent copying
-    // TODO: server_tokens should be copyable - remove this:
     server_tokens(const server_tokens&) = delete;
     server_tokens& operator=(const server_tokens&) = delete;
 
-    // Allow moving (usually implicitly generated if members are movable)
+    // Allow moving
     server_tokens(server_tokens&&) = default;
     server_tokens& operator=(server_tokens&&) = default;
 
@@ -163,22 +143,17 @@ public:
     llama_token operator[](size_t index) { return tokens[index]; }
     const llama_token& operator[](size_t index) const { return tokens[index]; }
 
-    server_tokens(mtmd::input_chunks & mtmd_chunks, bool has_mtmd);
-    server_tokens(const llama_tokens & tokens, bool has_mtmd);
+    server_tokens(const llama_tokens & tokens);
 
     // for debugging
     std::string str() const;
 
     llama_pos pos_next() const;
-    const mtmd::input_chunk_ptr & find_chunk(size_t idx) const;
 
     void push_back(llama_token tok);
 
-    // will create a copy of the chunk if it contains non-text data
-    void push_back(const mtmd_input_chunk * chunk);
-
-    // appends server tokens, updates the media map. copies media chunks.
-    void push_back(server_tokens & tokens);
+    // appends server tokens
+    void push_back(server_tokens & other);
 
     // for compatibility with context shift and prompt truncation
     void insert(const llama_tokens & inp_tokens);
@@ -193,10 +168,7 @@ public:
 
     bool empty() const { return tokens.empty(); }
 
-    void clear() {
-        map_idx_to_media.clear();
-        tokens.clear();
-    }
+    void clear() { tokens.clear(); }
 
     void keep_first(size_t n);
 
@@ -206,15 +178,6 @@ public:
 
     // make sure all text tokens are within the vocab range
     bool validate(const struct llama_context * ctx) const;
-
-    // encode and decode the image chunk
-    int32_t process_chunk(
-                llama_context * ctx,
-                mtmd_context * mctx,
-                size_t idx,
-                llama_pos pos,
-                int32_t seq_id,
-                size_t & n_tokens_out) const;
 
     server_tokens clone() const;
 };
@@ -247,25 +210,19 @@ llama_tokens tokenize_mixed(const llama_vocab * vocab, const json & json_prompt,
 // if validate_utf8(text) == text.size(), then the whole text is valid utf8
 size_t validate_utf8(const std::string& text);
 
-// process mtmd prompt, return the server_tokens containing both text tokens and media chunks
-server_tokens process_mtmd_prompt(mtmd_context * mctx, std::string prompt, std::vector<raw_buffer> files);
-
 /**
  * break the input "prompt" object into multiple prompt if needed, then tokenize them
  * this supports these cases:
  * - "prompt": "string"
  * - "prompt": [12, 34, 56]
  * - "prompt": [12, 34, "string", 56, 78]
- * - "prompt": { "prompt_string": "string", "multimodal_data": [ "base64" ] }
  * and multiple prompts (multi-tasks):
  * - "prompt": ["string1", "string2"]
  * - "prompt": ["string1", [12, 34, 56]]
  * - "prompt": [[12, 34, 56], [78, 90, 12]]
- * - "prompt": [[12, 34, "string", 56, 78], [12, 34, 56], { "prompt_string": "string", "multimodal_data": [ "base64" ]}]
  */
 std::vector<server_tokens> tokenize_input_prompts(
                                         const llama_vocab * vocab,
-                                        mtmd_context * mctx,
                                         const json & json_prompt,
                                         bool add_special,
                                         bool parse_special);
@@ -283,17 +240,13 @@ struct oaicompat_parser_options {
     common_reasoning_format reasoning_format;
     std::map<std::string,std::string> chat_template_kwargs;
     common_chat_templates * tmpls;
-    bool allow_image;
-    bool allow_audio;
     bool enable_thinking = true;
-    std::string media_path;
 };
 
 // used by /chat/completions endpoint
 json oaicompat_chat_params_parse(
     json & body, /* openai api json semantics */
-    const oaicompat_parser_options & opt,
-    std::vector<raw_buffer> & out_files);
+    const oaicompat_parser_options & opt);
 
 // convert Anthropic Messages API format to OpenAI Chat Completions API format
 json convert_anthropic_to_oai(const json & body);
@@ -357,6 +310,5 @@ llama_tokens format_prompt_infill(
 server_tokens format_prompt_rerank(
         const struct llama_model * model,
         const struct llama_vocab * vocab,
-        mtmd_context * mctx,
         const std::string & query,
         const std::string & doc);
